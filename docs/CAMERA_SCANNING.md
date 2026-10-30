@@ -203,8 +203,8 @@ described above.
   dock then finds the first frame itself. Opening the dock's port resets the dock, so it does
   not know the position of a strip that was in it before.
 - While NegPy uses the dock, the dock's S button works as Scan: it starts a scan, or stops one.
-  The dock answers the press with its own exposure first, so the scan starts a few seconds
-  later. An arrow button nudges the film on a tap and moves it while you hold it. NegPy
+  The scan starts at the press. The dock also makes a 3-second exposure of its own, and the
+  film moves only after it ends. An arrow button nudges the film on a tap and moves it while you hold it. NegPy
   leaves the dock's button mode (`BTNMODE`) as you set it.
 - When NegPy releases the dock, it puts back the dock's saved light mode and control mode.
 

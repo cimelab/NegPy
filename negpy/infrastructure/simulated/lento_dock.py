@@ -2,6 +2,7 @@
 and moves a strip of `frames` frames."""
 
 import queue
+import threading
 
 _IDENT = "IDENT serial=035SIM/0001/26 model=35 hwrev=v1.0"
 _VER = "VER fw=1.0.224 model=35"
@@ -47,16 +48,23 @@ class SimDockSerial:
             f"busy=0 expmode={self.expmode} shutter=JACK"
         )
 
-    def press_scan(self) -> None:
-        """The S button in host mode: the dock makes its own exposure, then reports it."""
+    def press_scan(self, hold_s: float = 0.0) -> None:
+        """The S button in host mode: the dock holds its own exposure for `hold_s`, then reports it."""
         self.st = "EXPOSE"
         self._say(self._state())
-        self._say("SHOT done ms=3000")
-        self.st = "READY"
-        self._say(self._state())
+
+        def done() -> None:
+            self._say("SHOT done ms=3000")
+            self.st = "READY"
+            self._say(self._state())
+
+        if hold_s:
+            threading.Timer(hold_s, done).start()
+        else:
+            done()
 
     def _frame_next(self) -> None:
-        if self.mode != "SEMI" or self.frames == 0:
+        if self.mode != "SEMI" or self.frames == 0 or self.st == "EXPOSE":
             self._say("ERR STATE")
             return
         self._say("OK")

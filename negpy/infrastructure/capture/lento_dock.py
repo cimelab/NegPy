@@ -46,6 +46,7 @@ DOCK_FULL_SCALE = 1000
 PING_INTERVAL_S = 5.0
 #: The motor moves one frame and checks the frame edge within this time.
 ADVANCE_TIMEOUT_S = 15.0
+EXPOSE_WAIT_S = 5.0  # the dock's own exposure on an S press lasts 3 s
 EJECT_TIMEOUT_S = 30.0
 HOLD_INTERVAL_S = 30.0
 
@@ -227,6 +228,7 @@ class LentoDock:
         """
         self._enter_continuous()
         self._command("STATE?", r"^STATE\b")
+        self._wait_out_exposure()
         if self._state.get("film") == "0":
             return None
         self._last_frameat = ""
@@ -242,6 +244,7 @@ class LentoDock:
     def eject(self) -> None:
         """Move the strip out of the dock. The last frame stops in the window, short of the exit."""
         self._enter_continuous()
+        self._wait_out_exposure()
         self._command("EJECT", r"^(OK|ERR)", then=((r"^(EJECTED\b|STATE\b.*\bentrance=0\b)", EJECT_TIMEOUT_S),))
         self._light_on = False  # the next set_color holds the light again, for a shot of the empty dock
 
@@ -377,6 +380,13 @@ class LentoDock:
         finally:
             self._replies.put(_READER_DIED)
 
+    def _wait_out_exposure(self) -> None:
+        """An S press holds the dock in its own exposure (st=EXPOSE), and NegPy's scan starts at
+        the press; the film may move only once that exposure ends."""
+        deadline = time.monotonic() + EXPOSE_WAIT_S
+        while self._state.get("st") == "EXPOSE" and time.monotonic() < deadline:
+            time.sleep(0.05)
+
     def _dispatch(self, line: str) -> None:
         logger.debug("Lento Dock: %s", line)
         if line.startswith("FRAMEAT"):
@@ -384,14 +394,15 @@ class LentoDock:
         elif line.startswith(("END_OF_ROLL", "ROLLEND")):
             self._last_frameat = ""
         if line.startswith("STATE"):
+            was = self._state.get("st")
             self._state = parse_kv(line)
+            # NegPy starts no exposure of the dock's own: one that begins outside a NegPy command is
+            # the S button. The dock accepts light commands during it.
+            if self._state.get("st") == "EXPOSE" and was != "EXPOSE" and not self._in_command and self.on_scan_button:
+                try:
+                    self.on_scan_button()
+                except Exception:
+                    logger.exception("Lento Dock scan button handler failed")
         elif line.startswith("BOOT"):
             self._booted.set()
-        elif line.startswith("SHOT done") and not self._in_command and self.on_scan_button is not None:
-            # NegPy sends no SHOT: an exposure it did not ask for is the S button, which the dock
-            # answers with its own exposure before it reports.
-            try:
-                self.on_scan_button()
-            except Exception:
-                logger.exception("Lento Dock scan button handler failed")
         self._replies.put(line)

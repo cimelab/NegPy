@@ -261,9 +261,11 @@ def test_the_s_button_calls_the_scan_handler(sim):
         dock.on_scan_button = lambda: pressed.append(1)
         dock.advance_frame()
         assert pressed == []  # NegPy's own commands are never a press
-        sim.press_scan()
-        for _ in range(100):
+        sim.press_scan(hold_s=0.5)
+        for _ in range(30):
             if pressed:
                 break
             time.sleep(0.01)
+        assert pressed == [1]  # at the press, not at the end of the dock's exposure
+        assert dock.advance_frame() == 1  # the film waits for the dock's exposure to end
     assert pressed == [1]
