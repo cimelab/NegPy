@@ -25,7 +25,7 @@ from negpy.domain.models import (
 from negpy.features.altprocess.models import AltProcess
 from negpy.features.process.capture_color import wb_only_cam_xyz
 from negpy.features.process.models import DemosaicMode, ProcessMode, invalidate_local_bounds
-from negpy.features.process.path import RenderPath, render_path
+from negpy.features.process.path import RenderPath, positive_decode, render_path
 from negpy.features.process.logic import (
     demosaic_token,
     effective_highlight_reconstruction,
@@ -172,8 +172,16 @@ def _grey_reencode_lut(working_color_space: Optional[str], bits: int) -> np.ndar
         gray = np.where(lin <= 0.0031308, lin * 12.92, 1.055 * np.power(lin, 1.0 / 2.4) - 0.055)
         out = np.clip(gray * 65535.0 + 0.5, 0.0, 65535.0).astype(np.uint16)
     if bits == 8:
-        out = np.clip(np.round(out.astype(np.float32) / 257.0), 0.0, 255.0).astype(np.uint8)
+        out = _u16_to_u8_lut()[out]
     out = np.ascontiguousarray(out)
+    out.setflags(write=False)
+    return out
+
+
+@lru_cache(maxsize=1)
+def _u16_to_u8_lut() -> np.ndarray:
+    """Round every uint16 code to the nearest uint8 code, as a table for negpy_core.lut_u16."""
+    out = np.clip(np.round(np.arange(65536, dtype=np.float32) / 257.0), 0.0, 255.0).astype(np.uint8)
     out.setflags(write=False)
     return out
 
@@ -354,7 +362,7 @@ def precorrect_key(
         shape,
         linear_raw_token(settings.process),
         demosaic_token(settings.process.demosaic_preview),
-        settings.process.positive_source,
+        positive_decode(settings.process),
         skip_flatfield,
         gain_slices,
         source_orientation,
@@ -782,6 +790,7 @@ class ImageProcessor:
         gain_slices: tuple = (),
         source_orientation: int = 1,
         film_base: Optional[tuple] = None,
+        wants_fade_grid: bool = False,
     ) -> Tuple[Any, Dict[str, Any]]:
         """Executes rendering pipeline. Returns result (ndarray/GPUTexture) and metrics. ``skip_flatfield``: the export CPU
         fallbacks pass an already flat-fielded buffer. ``gain_slices``: the ``slice_half`` cuts that took *img* out of the
@@ -884,6 +893,7 @@ class ImageProcessor:
             camera_wb=camera_wb,
             cache_stages=cache_stages,
             readback_metrics=readback_metrics,
+            wants_fade_grid=wants_fade_grid,
         )
         if metrics:
             context.metrics.update(metrics)
@@ -1007,7 +1017,7 @@ class ImageProcessor:
         fast: bool = False,
         wb_override: Optional[Sequence[float]] = None,
         demosaic: str = DemosaicMode.AUTO,
-        positive_source: bool = False,
+        positive_decode: str = "",
         highlight_mode: int = 0,
         bake_camera_wb: bool = False,
         load_ir: bool = True,
@@ -1038,7 +1048,7 @@ class ImageProcessor:
 
         Returns (rgb_uint16, loader_metadata).
         """
-        ctx_mgr, metadata = loader_factory.get_loader(file_path, linear_raw=linear_raw, positive_source=positive_source, load_ir=load_ir)
+        ctx_mgr, metadata = loader_factory.get_loader(file_path, linear_raw=linear_raw, positive_decode=positive_decode, load_ir=load_ir)
         with ctx_mgr as raw:
             algo = get_best_demosaic_algorithm(raw, demosaic)
             # Read before postprocess: camera_whitebalance is sensor metadata, unaffected by it,
@@ -1104,6 +1114,7 @@ class ImageProcessor:
             mtime,
             lens_decode_token(metadata_lens_corrections(params), params.flatfield),
             effective_linear_raw(params.process),
+            positive_decode(params.process),
             effective_highlight_reconstruction(params.process),
             highlight_reconstruction_bakes_wb(params.process),
             rgbscan_token(params.rgbscan),
@@ -1192,7 +1203,7 @@ class ImageProcessor:
                     fast=fast_decode,
                     wb_override=_NEUTRAL_WB,
                     demosaic=demosaic,
-                    positive_source=params.process.positive_source,
+                    positive_decode=positive_decode(params.process),
                     highlight_mode=highlight_mode,
                 )
                 decoded = dict(
@@ -1204,7 +1215,7 @@ class ImageProcessor:
                                 linear_raw,
                                 wb_override=_NEUTRAL_WB,
                                 demosaic=demosaic,
-                                positive_source=params.process.positive_source,
+                                positive_decode=positive_decode(params.process),
                                 highlight_mode=highlight_mode,
                             )[0],
                             siblings,
@@ -1219,7 +1230,7 @@ class ImageProcessor:
                 fast=fast_decode,
                 wb_override=wb_override,
                 demosaic=demosaic,
-                positive_source=params.process.positive_source,
+                positive_decode=positive_decode(params.process),
                 highlight_mode=highlight_mode,
                 bake_camera_wb=bake_wb,
                 load_ir=params.retouch.ir_dust_remove,
@@ -1237,15 +1248,13 @@ class ImageProcessor:
         ir_full = metadata.get("ir")
 
         if is_triplet:
-
+            # Merged in float, as the preview merges: the align's cubic warp overshoots the
+            # sensor ceiling, and a cast of the merge back to uint16 wraps it to black.
             def _decode(path: str) -> np.ndarray:
-                if path == file_path:
-                    return rgb
-                return decoded[path]
+                return uint16_to_float32(rgb if path == file_path else decoded[path])
 
-            rgb = merge_rgb_triplet(_decode, file_path, rgbcfg.green_path, rgbcfg.blue_path, align=rgbcfg.align)
-
-        if hdr_active(params.hdr):
+            f32_buffer = merge_rgb_triplet(_decode, file_path, rgbcfg.green_path, rgbcfg.blue_path, align=rgbcfg.align)
+        elif hdr_active(params.hdr):
             # Merged straight to float32: the recovered detail sits below the reference
             # exposure's quantization step, so a uint16 round-trip would discard it. This
             # runs before flat-field and the sensor unmix, both applied below. The decode
@@ -1273,7 +1282,7 @@ class ImageProcessor:
                                 fast=fast_decode,
                                 wb_override=bracket_wb,
                                 demosaic=demosaic,
-                                positive_source=params.process.positive_source,
+                                positive_decode=positive_decode(params.process),
                                 highlight_mode=highlight_mode,
                             )[0],
                             hdr_siblings,
@@ -1927,6 +1936,26 @@ class ImageProcessor:
             return self._apply_color_management_u16(float_to_uint16(buffer), working_color_space, color_space, icc_output, icc_input)
         if is_greyscale:
             return self._greyscale_to_u8(buffer, working_color_space, color_space, icc_output, icc_input)
+        if not self._has_custom_icc(icc_input, icc_output) and working_color_space == color_space:
+            return float_to_uint8(buffer), self._get_target_icc_bytes(color_space, None)
+        # Convert at 16 bits and round to 8 once: near the destination gamut edge, one 8-bit
+        # source step moves a near-zero destination channel by many codes. The 8-bit PIL
+        # transform is the fallback when the CMS codec cannot load or refuses the profiles.
+        src_bytes = self._get_target_icc_bytes(working_color_space, icc_input)
+        dst_bytes = self._get_target_icc_bytes(color_space, icc_output)
+        if src_bytes and dst_bytes:
+            img16 = float_to_uint16(buffer)
+            out16 = apply_matrix_trc_u16(img16, src_bytes, dst_bytes)
+            if out16 is None:
+                try:
+                    out16 = _cms_transform_strips(np.ascontiguousarray(img16), src_bytes, dst_bytes)
+                except ImportError as e:
+                    self._log_cms_codec_dlopen_error()
+                    logger.warning(f"imagecodecs CMS codec unavailable on this build ({e}); using the 8-bit transform")
+                except Exception as e:
+                    logger.warning(f"16-bit CMS transform failed ({e}); using the 8-bit transform")
+            if out16 is not None:
+                return negpy_core.lut_u16(out16, _u16_to_u8_lut()), dst_bytes
         return self.apply_color_management(float_to_uint8(buffer), working_color_space, color_space, icc_output, icc_input)
 
     def render_display_array(
@@ -2259,7 +2288,7 @@ class ImageProcessor:
                 return img_u16, self._get_target_icc_bytes(color_space, output_icc_path)
 
             # Matrix/TRC pairs take the exact kernel: lcms resamples a 16-bit transform to a
-            # grid, off by up to 8% near the destination gamut edge. LUT profiles keep lcms.
+            # grid, which drifts near the destination gamut edge. LUT profiles keep lcms.
             if img_u16.ndim == 3:
                 fast = apply_matrix_trc_u16(img_u16, src_bytes, dst_bytes)
                 if fast is not None:

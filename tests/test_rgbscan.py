@@ -81,8 +81,8 @@ def _scene_triplet(dx, dy):
     r = np.zeros((*base.shape, 3), np.float32)
     g = np.zeros_like(r)
     b = np.zeros_like(r)
-    r[..., 0] = base
-    g[..., 1] = _shift(base, dx, dy)  # green drifted relative to red
+    g[..., 1] = base
+    r[..., 0] = _shift(base, dx, dy)  # red drifted relative to green
     b[..., 2] = _shift(base, -dx, dy)
     return base, r, g, b
 
@@ -93,9 +93,15 @@ def test_assemble_rgb_alignment_reduces_misregistration():
     raw = assemble_rgb(r, g, b, align=False)
     # Ignore the warp border where REPLICATE/REFLECT differ; compare the interior.
     sl = (slice(8, -8), slice(8, -8))
-    err_aligned = np.abs(aligned[..., 1][sl] - base[sl]).mean()
-    err_raw = np.abs(raw[..., 1][sl] - base[sl]).mean()
-    assert err_aligned < err_raw * 0.5
+    for ch in (0, 2):
+        err_aligned = np.abs(aligned[..., ch][sl] - base[sl]).mean()
+        err_raw = np.abs(raw[..., ch][sl] - base[sl]).mean()
+        assert err_aligned < err_raw * 0.5
+
+
+def test_assemble_rgb_leaves_the_green_exposure_unresampled():
+    _base, r, g, b = _scene_triplet(0.5, 0.5)
+    assert np.array_equal(assemble_rgb(r, g, b, align=True)[..., 1], g[..., 1])
 
 
 def test_assemble_rgb_no_align_is_plain_stack():
@@ -111,10 +117,10 @@ def test_align_skips_implausible_shift():
     base = _texture()
     r = np.zeros((*base.shape, 3), np.float32)
     g = np.zeros_like(r)
-    r[..., 0] = base
-    g[..., 1] = _shift(base, 60.0, 0.0)  # > max_shift (0.02*128 -> floored to 16)
+    g[..., 1] = base
+    r[..., 0] = _shift(base, 60.0, 0.0)  # > max_shift (0.02*128 -> floored to 16)
     out = assemble_rgb(r, g, g, align=True)
-    assert np.array_equal(out[..., 1], g[..., 1])
+    assert np.array_equal(out[..., 0], r[..., 0])
 
 
 def test_rgbscan_token_changes_with_align(tmp_path):
@@ -837,3 +843,24 @@ def test_triplet_ignores_stale_plain_hash_cache(monkeypatch):
     out = thumbnails.get_thumbnail_worker("r", "hash", Store(), 0, 0.5, "g", "b")
     assert out is not stale
     assert saved[thumbnails.thumbnail_cache_key("hash", True)] is out
+
+
+def test_export_triplet_keeps_an_aligned_overshoot_saturated(tmp_path, monkeypatch):
+    """The align's cubic warp rings past the sensor ceiling at a clipped edge. The export
+    merge must keep that pixel saturated, never wrap it through uint16 to black."""
+    from negpy.features.rgbscan import logic
+    from negpy.services.rendering.image_processor import ImageProcessor
+
+    red, green, blue = (str(tmp_path / f"{c}.nef") for c in "rgb")
+    for p in (red, green, blue):
+        open(p, "wb").close()
+
+    processor = ImageProcessor()
+    processor._decode_sensor_rgb = lambda path, *a, **k: (np.full((4, 4, 3), 65535, dtype=np.uint16), {})
+    monkeypatch.setattr(logic, "_align_to", lambda ref, mov, ch, max_shift: np.asarray(mov, dtype=np.float32) * 1.004)
+
+    cfg = replace(WorkspaceConfig(), rgbscan=RgbScanConfig(enabled=True, green_path=green, blue_path=blue, align=True))
+    f32, _ir, _cs = processor._decode_oriented_f32(red, cfg)
+
+    assert f32.dtype == np.float32
+    assert f32.min() >= 1.0
