@@ -32,6 +32,7 @@ from negpy.features.geometry.batch_autocrop import CropEvidence, detect_crop_can
 from negpy.features.process.capture_color import wb_only_cam_xyz
 from negpy.features.process.sensor import apply_sensor_correction, effective_sensor_matrix
 from negpy.features.process.logic import effective_highlight_reconstruction, effective_linear_raw, highlight_reconstruction_bakes_wb
+from negpy.features.process.path import positive_decode
 from negpy.features.process.models import DemosaicMode
 from negpy.infrastructure.loaders.factory import loader_factory
 from negpy.infrastructure.loaders.helpers import unsupported_raw_reason
@@ -217,11 +218,6 @@ class NormalizationTask:
 
     frames: list[NormalizationInput]
     workspace_color_space: str
-    # Roll-wide overrides taken from the current image, applied to every file's analysis
-    # before averaging, so the whole roll shares one buffer and luma bounds. None reads each frame's own.
-    override_analysis_buffer: Optional[float]
-    override_luma_range_clip: Optional[float]
-    override_color_range_clip: Optional[float]
     # Detect Scenes: the same per-frame pass, grouped by light instead of pooled into a baseline.
     detect: bool = False
     # One frame at a time on the background core pool, so the live preview keeps the CPU.
@@ -315,7 +311,7 @@ class PreviewLoadTask:
     workspace_color_space: str
     use_camera_wb: bool
     generation: int = 0
-    positive_source: bool = False
+    positive_decode: str = ""
     highlight_mode: int = 0
     bake_camera_wb: bool = False
     full_resolution: bool = False
@@ -784,7 +780,7 @@ def rgb_grouping_notice(made: int, loose: int, incomplete: int, mismatched: int,
     made_text = f"{count_of(made, 'frame')} assembled, " if made else ""
     return (
         f"Trichrome Mode: {made_text}{count_of(loose, 'file')} left separate{detail}{order}. "
-        "Right-click a frame and choose Edit RGB Triplet to pair them by hand."
+        "Select a frame's three files, right-click and choose Merge Exposures (Trichrome) to join them."
     )
 
 
@@ -821,7 +817,7 @@ def rgb_nothing_matched_message(summary: dict) -> tuple[str, str]:
         "Each frame needs three captures — one under red light, one under green, one under blue — "
         "taken back to back before you move on to the next frame, and the folder should hold "
         f"nothing else. {naming}\n\n"
-        "You can also pair files by hand: right-click a frame and choose Edit RGB Triplet.",
+        "You can also join files by hand: select a frame's three files, right-click and choose Merge Exposures (Trichrome).",
     )
 
 
@@ -1042,6 +1038,7 @@ class AssetDiscoveryWorker(QObject):
         import os
 
         from negpy.kernel.image.logic import calculate_file_hash
+        from negpy.services.assets.triplets import made_by_hand
 
         hashes = {a["path"]: a["hash"] for a in assets}
         out = []
@@ -1067,6 +1064,7 @@ class AssetDiscoveryWorker(QObject):
                         "align": align,
                         "green_hash": hashes.get(gb[0], stored[1]),
                         "blue_hash": hashes.get(gb[1], stored[2]),
+                        "triplet_by_hand": made_by_hand(gb),
                     }
                 )
                 parts.update({gb[0], gb[1]})
@@ -1319,7 +1317,7 @@ class PreviewLoadWorker(QObject):
                     file_hash=task.file_hash,
                     half_slice=task.half_slice,
                     demosaic=task.demosaic,
-                    positive_source=task.positive_source,
+                    positive_decode=task.positive_decode,
                     integrated_gpu=task.integrated_gpu,
                     protected_file_hashes=task.protected_file_hashes,
                     should_cancel=lambda: not self._prefetch_is_current(task),
@@ -1337,7 +1335,7 @@ class PreviewLoadWorker(QObject):
                     use_camera_wb=task.use_camera_wb,
                     file_hash=task.file_hash,
                     demosaic=task.demosaic,
-                    positive_source=task.positive_source,
+                    positive_decode=task.positive_decode,
                     highlight_mode=task.highlight_mode,
                     bake_camera_wb=task.bake_camera_wb,
                     lens_corrections=task.lens_corrections,
@@ -1513,7 +1511,7 @@ class PreviewLoadWorker(QObject):
                     log_timings=True,
                     half_slice=task.half_slice,
                     demosaic=task.demosaic,
-                    positive_source=task.positive_source,
+                    positive_decode=task.positive_decode,
                     should_cancel=cancelled,
                     highlight_mode=task.highlight_mode,
                     bake_camera_wb=task.bake_camera_wb,
@@ -1535,7 +1533,7 @@ class PreviewLoadWorker(QObject):
                     log_timings=True,
                     half_slice=task.half_slice,
                     demosaic=task.demosaic,
-                    positive_source=task.positive_source,
+                    positive_decode=task.positive_decode,
                     should_cancel=cancelled,
                     highlight_mode=task.highlight_mode,
                     bake_camera_wb=task.bake_camera_wb,
@@ -1683,7 +1681,7 @@ def _decode_asset_preview_with_meta(
         raw, _, meta = preview_service.load_linear_preview(
             file_info["path"],
             workspace_color_space,
-            positive_source=config.process.positive_source,
+            positive_decode=positive_decode(config.process),
             highlight_mode=effective_highlight_reconstruction(config.process),
             bake_camera_wb=highlight_reconstruction_bakes_wb(config.process),
             lens_corrections=metadata_lens_corrections(config),
@@ -1950,7 +1948,7 @@ class ThumbnailRenderWorker(QObject):
             use_camera_wb=not effective_linear_raw(config.process),
             file_hash=base_hash(frame.file_info.get("hash")),
             demosaic=config.process.demosaic_preview,
-            positive_source=config.process.positive_source,
+            positive_decode=positive_decode(config.process),
             highlight_mode=effective_highlight_reconstruction(config.process),
             bake_camera_wb=highlight_reconstruction_bakes_wb(config.process),
             lens_corrections=metadata_lens_corrections(config),
@@ -2154,12 +2152,8 @@ class NormalizationWorker(QObject):
                     return None
                 try:
                     params = frame.config
-                    # Roll-wide buffer and luma bounds from the current image, applied to every
-                    # file, so one slider setting drives the whole batch baseline.
                     p = params.process
-                    analysis_buffer = p.analysis_buffer if task.override_analysis_buffer is None else task.override_analysis_buffer
-                    luma_range_clip = p.luma_range_clip if task.override_luma_range_clip is None else task.override_luma_range_clip
-                    color_range_clip = p.color_range_clip if task.override_color_range_clip is None else task.override_color_range_clip
+                    analysis_buffer, luma_range_clip, color_range_clip = p.analysis_buffer, p.luma_range_clip, p.color_range_clip
                     process_mode = params.process.process_mode
                     geometry = params.geometry
 

@@ -16,7 +16,7 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
-from negpy.desktop.settings_catalog import SettingRow, catalog_sections
+from negpy.desktop.settings_catalog import CATALOG, SettingRow, catalog_sections
 from negpy.desktop.view.styles.templates import (
     field_label,
     hint_label,
@@ -79,8 +79,8 @@ def build_scope_row(sel_count: int, roll_count: int, show_current: bool = False)
 class GranularSettingsDialog(QDialog):
     """Per-setting picker for paste / apply-to-many. Lists one collapsible section
     per edit area, each setting with a toggle and its value. Settings still at
-    their default are built but hidden until "Show unchanged settings" — they must
-    stay pickable so a roll can be reset back to a default value (#656). Reuses the
+    their default are built but hidden until "Show Defaults": they stay
+    pickable so a roll can be reset to a default value (#656). Reuses the
     shortcut-editor's CollapsibleSection look."""
 
     def __init__(
@@ -181,7 +181,7 @@ class GranularSettingsDialog(QDialog):
         check_none = labeled_action("", tr("All Off"), tr("Turn off every listed setting"))
         check_none.clicked.connect(lambda: self._set_all_checked(False))
         self._show_unchanged = labeled_toggle(
-            "fa5s.eye", tr("Show Unchanged"), False, tr("List settings still at their default, so they can be applied too")
+            "fa5s.eye", tr("Show Defaults"), False, tr("List settings still at their default, so they can be applied too")
         )
         self._show_unchanged.toggled.connect(self._apply_visibility)
         self._show_unchanged.setVisible(self._preselect_ids is None)
@@ -358,6 +358,12 @@ class GranularSettingsDialog(QDialog):
         for box, row, _edited, _line in self._checks:
             box.setChecked(row.id in wanted)
 
+    def uncheck_rows(self, row_ids) -> None:
+        """Start these rows off; the user can still turn them on."""
+        for box, row, _edited, _line in self._checks:
+            if row.id in row_ids:
+                box.setChecked(False)
+
     def limit_to_rows(self, row_ids) -> None:
         """Show only these rows, for a picker opened from one section's own header. The
         rest leave _checks entirely, so All On and the Apply gate never see them."""
@@ -504,6 +510,11 @@ def open_sync_bounds_dialog(parent, session) -> None:
         session.sync_selected_settings([], dlg.bounds_flags(), dlg.scope())
 
 
+# One frame's placement on its film: the full picker starts these off, so a copy to the roll
+# never crops or turns every frame alike by default.
+_PLACEMENT_ROW_IDS = frozenset({"geometry.crop_rect"} | {r.id for title, rows in CATALOG if title == "Straighten" for r in rows})
+
+
 def open_apply_dialog(parent, session, rows=None, title: str = "") -> tuple[list, str] | None:
     """Apply the active frame's settings to the selection or the whole roll.
 
@@ -536,6 +547,8 @@ def open_apply_dialog(parent, session, rows=None, title: str = "") -> tuple[list
     )
     if rows is not None:
         dlg.limit_to_rows([r.id for r in rows])
+    else:
+        dlg.uncheck_rows(_PLACEMENT_ROW_IDS)
     if title:
         dlg.setWindowTitle(title)
     if dlg.exec() != QDialog.DialogCode.Accepted:

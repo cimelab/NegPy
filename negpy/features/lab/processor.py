@@ -5,18 +5,19 @@ from negpy.domain.interfaces import PipelineContext
 from negpy.domain.types import ImageBuffer
 from negpy.features.lab.logic import (
     apply_chroma_denoise,
+    chroma_denoise_radius,
     apply_glow_and_halation,
     apply_lab_sharpening,
     apply_saturation,
     auto_masking,
 )
 from negpy.features.lab.models import LabConfig
-from negpy.features.process.models import ProcessMode
 
 
 class PhotoLabProcessor:
-    def __init__(self, config: LabConfig):
+    def __init__(self, config: LabConfig, mono: bool = False):
         self.config = config
+        self.mono = mono
 
     def process(self, image: ImageBuffer, context: PipelineContext) -> ImageBuffer:
         """
@@ -24,8 +25,9 @@ class PhotoLabProcessor:
         """
         img = image
 
-        if self.config.chroma_denoise > 0:
-            img = apply_chroma_denoise(img, self.config.chroma_denoise, context.scale_factor)
+        chroma_radius = chroma_denoise_radius(self.config.chroma_denoise, self.mono)
+        if chroma_radius > 0:
+            img = apply_chroma_denoise(img, chroma_radius, context.scale_factor)
 
         if self.config.saturation != 1.0 or self.config.skin_protection > 0:
             img = apply_saturation(img, self.config.saturation, self.config.skin_protection)
@@ -41,7 +43,7 @@ class PhotoLabProcessor:
                 img,
                 self.config.glow_amount,
                 self.config.halation_strength,
-                bw=context.process_mode == ProcessMode.BW,
+                bw=self.mono,
             )
 
         return negpy_core.clip01(np.ascontiguousarray(img, dtype=np.float32))

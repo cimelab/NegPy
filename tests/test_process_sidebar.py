@@ -59,6 +59,19 @@ def test_lock_bounds_sits_in_the_analysis_row_and_hides_on_the_transparency_tran
     assert sidebar.lock_bounds_btn.isHidden()
 
 
+def test_draw_region_and_its_clear_stay_on_the_transparency_transfer(qapp):
+    """The slide meters, Estimate and Remove Stain read a drawn region, so a slide keeps the tool."""
+    controller, sidebar = _sidebar()
+    cfg = controller.state.config
+    process = replace(cfg.process, process_mode=ProcessMode.E6, analysis_rect=(0.1, 0.1, 0.9, 0.9))
+    controller.state.config = replace(cfg, process=process)
+    sidebar.sync_ui()
+    assert not sidebar.analysis_region_btn.isHidden()
+    assert sidebar.clear_analysis_region_btn.isVisibleTo(sidebar.analysis_region_btn)
+    assert sidebar.reanalyze_frame_btn.isHidden()
+    assert sidebar.analysis_buffer_slider.isHidden()
+
+
 def test_positive_is_slide_only(qapp):
     """Positive is a Slide-only fact, so it is hidden in the negative modes and always
     live on Slide."""
@@ -127,9 +140,8 @@ def test_the_analysis_bar_holds_everything_that_meters_this_frame(qapp):
     ]
     assert order == sorted(order)
     assert _row_index_containing(col, sidebar.analysis_header) == 0
-    assert _row_index_containing(col, sidebar.film_base_btn) == _row_index_containing(col, sidebar.analysis_region_btn)
+    assert _row_index_containing(col, sidebar.reanalyze_frame_btn) == _row_index_containing(col, sidebar.analysis_region_btn)
     assert sidebar.clear_analysis_region_btn.parentWidget() is sidebar.analysis_region_btn
-    assert sidebar.clear_film_base_btn.parentWidget() is sidebar.film_base_btn
 
 
 def test_the_region_buttons_carry_their_names(qapp):
@@ -147,13 +159,13 @@ def test_average_toggles_ride_the_baseline_bar_not_the_analysis(qapp):
         assert not sidebar.baseline_bar.isAncestorOf(widget)
 
 
-def test_reanalyze_and_lock_bounds_sit_on_the_analysis_header(qapp):
+def test_lock_bounds_sits_on_the_analysis_header(qapp):
     _, sidebar = _sidebar()
     col = sidebar.analysis_bar.layout()
     header_i = _row_index_containing(col, sidebar.analysis_header)
-    assert _row_index_containing(col, sidebar.reanalyze_frame_btn) == header_i
     assert _row_index_containing(col, sidebar.lock_bounds_btn) == header_i
-    assert sidebar.lock_bounds_btn.text() == "", "an icon-only toggle"
+    assert sidebar.reanalyze_frame_btn.text().strip() == "Measure Alone"
+    assert sidebar.lock_bounds_btn.text().strip() == "Lock"
 
 
 def test_the_point_header_folds_the_channel_row_and_its_sliders(qapp):
@@ -338,7 +350,7 @@ def test_reanalyze_names_the_selection(qapp):
     controller.state.config = replace(cfg, process=replace(cfg.process, lock_bounds=True))
     sidebar.sync_ui()
     assert sidebar.reanalyze_frame_btn.isEnabled()
-    assert "Reanalyze 3 Frames" in sidebar.reanalyze_frame_btn.toolTip()
+    assert "Measure 3 Frames Alone" in sidebar.reanalyze_frame_btn.toolTip()
 
 
 def test_baseline_hint_names_where_the_bounds_came_from(qapp):
@@ -439,3 +451,19 @@ def test_average_toggles_gray_out_without_a_roll(qapp):
     controller.state.active_roll_id = "roll-1"
     sidebar.sync_ui()
     assert sidebar.use_luma_avg_btn.isEnabled() and sidebar.use_color_avg_btn.isEnabled()
+
+
+def test_hand_picks_gray_out_while_the_frame_prints_on_the_roll_average(qapp):
+    """The render ignores Dmin/Dmax when Luma and Color both ride, so the picks say so."""
+    controller, sidebar = _sidebar()
+    cfg = controller.state.config
+    controller.state.config = replace(cfg, process=replace(cfg.process, use_luma_average=True, use_color_average=True))
+    sidebar.sync_ui()
+
+    assert not sidebar.dmin_btn.isEnabled() and not sidebar.dmax_btn.isEnabled()
+    assert "roll average" in sidebar.dmin_hint.text()
+
+    controller.state.config = replace(cfg, process=replace(cfg.process, use_luma_average=True, use_color_average=False))
+    sidebar.sync_ui()
+
+    assert sidebar.dmin_btn.isEnabled() and sidebar.dmax_btn.isEnabled()

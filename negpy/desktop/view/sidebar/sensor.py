@@ -17,7 +17,6 @@ from negpy.features.stitch.models import stitch_has_triplets
 from negpy.services.assets.crosstalk import CrosstalkProfiles
 from negpy.services.assets.sensor import SensorProfiles
 
-
 _UNMIX_CHOICES = (
     (
         SensorUnmix.LINEAR,
@@ -226,7 +225,6 @@ class SensorSidebar(BaseSidebar):
         self.measure_chart_btn.clicked.connect(self._open_chart_calibration)
         self.crosstalk_strength_slider.valueChanged.connect(lambda v: self._on_crosstalk_strength_changed(v, persist=False))
         self.crosstalk_strength_slider.valueCommitted.connect(lambda v: self._on_crosstalk_strength_changed(v, persist=True))
-
         self.hue_trim_slider.valueChanged.connect(lambda v: self._on_hue_trim_changed(v, persist=False))
         self.hue_trim_slider.valueCommitted.connect(lambda v: self._on_hue_trim_changed(v, persist=True))
 
@@ -347,16 +345,20 @@ class SensorSidebar(BaseSidebar):
         if dlg is None:
             return
         self._crosstalk_dialog = None
-        if self.state.current_file_hash and self._crosstalk_previewed:
-            self.controller.session.discard_preview()
-            # A persisted edit made during the preview stored it too; only a field the user has not
-            # changed since goes back, and the bounds re-meter instead of taking stale values.
-            conf = self.state.config.process
-            snapshot = self._crosstalk_snapshot
-            changes = {f: snapshot[f] for f, v in self._crosstalk_previewed.items() if getattr(conf, f) == v != snapshot[f]}
-            if changes:
-                self.update_config_section("process", render=False, **changes, **invalidate_local_bounds(conf))
+        self._take_back_preview(self._crosstalk_snapshot, self._crosstalk_previewed)
         dlg.reject()
+
+    def _take_back_preview(self, snapshot: dict, previewed: dict) -> None:
+        """Drop an editor's pending preview from the active frame before its edit is stored."""
+        if not (self.state.current_file_hash and previewed):
+            return
+        self.controller.session.discard_preview()
+        # A persisted edit made during the preview stored it too; only a field the user has not
+        # changed since goes back, and the bounds re-meter instead of taking stale values.
+        conf = self.state.config.process
+        changes = {f: snapshot[f] for f, v in previewed.items() if getattr(conf, f) == v != snapshot[f]}
+        if changes:
+            self.update_config_section("process", render=False, **changes, **invalidate_local_bounds(conf))
 
     def _on_crosstalk_editor_finished(self, dlg, result: int) -> None:
         if dlg is not self._crosstalk_dialog:

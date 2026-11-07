@@ -2,7 +2,7 @@ import os
 import io
 from concurrent.futures import ThreadPoolExecutor
 from types import SimpleNamespace
-from typing import Any, Callable, Optional, Tuple
+from typing import Any, Callable, Optional, Sequence, Tuple
 
 import negpy_core
 import numpy as np
@@ -10,6 +10,7 @@ import rawpy
 from PIL import Image, ImageCms
 
 from negpy.domain.models import ColorSpace
+from negpy.features.process.capture_color import is_source_profile
 from negpy.features.process.models import DemosaicMode
 from negpy.infrastructure.loaders.constants import SUPPORTED_RAW_EXTENSIONS
 from negpy.kernel.image.logic import apply_exif_orientation, ensure_rgb, uint16_to_float32
@@ -665,6 +666,9 @@ class NonStandardFileWrapper:
         # for camera WB. None means the source has no WB to offer, as with NegPy's own scanner
         # DNGs, which are always neutral. postprocess() then leaves the data untouched.
         self.wb_gains: Optional[Tuple[float, float, float]] = wb_gains
+        # A Positive source decoded in its own primaries carries them here (source_cam_xyz), read
+        # by camera_xyz_matrix like a camera's. None for every other source.
+        self.rgb_xyz_matrix: Optional[Sequence] = None
 
     @property
     def data(self) -> np.ndarray:
@@ -777,7 +781,7 @@ def is_xtrans(raw: Any) -> bool:
         return False
 
 
-def camera_xyz_matrix(raw: Any) -> Optional[list]:
+def camera_xyz_matrix(raw: Any) -> Optional[Sequence]:
     """The decoder's XYZ->camera matrix as plain nested lists, or None if it carries none.
 
     Serialized out of the rawpy object deliberately: the metadata dict outlives the `with`
@@ -785,6 +789,8 @@ def camera_xyz_matrix(raw: Any) -> Optional[list]:
     memory once it closes.
     """
     try:
+        if is_source_profile(raw.rgb_xyz_matrix):
+            return raw.rgb_xyz_matrix
         m = np.asarray(raw.rgb_xyz_matrix, dtype=np.float64)
     except Exception:
         return None

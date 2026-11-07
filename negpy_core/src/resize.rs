@@ -766,7 +766,7 @@ fn cubic_row_u8(
     starts: &[u32],
     wts: &[[i16; 16]],
     out: &mut [i32],
-    #[cfg_attr(not(target_arch = "x86_64"), allow(unused_variables))] windows_fit: bool,
+    windows_fit: bool,
 ) {
     #[cfg(target_arch = "x86_64")]
     if windows_fit && (cn == 3 || cn == 4) && std::arch::is_x86_feature_detected!("avx2") {
@@ -781,6 +781,7 @@ fn cubic_row_u8(
         );
         return;
     }
+    let _ = windows_fit;
     cubic_row_u8_scalar(padded, cn, starts, wts, out);
 }
 

@@ -1,5 +1,47 @@
 # Change Log
 
+## 0.68.0
+
+- New: **Fade Restoration** — restores the dyes of faded slides on its own Roll-tab card, with an optional Remove Stain. @thetalkingdrum
+- New: **B&W slides** — a Slide B&W toggle for B&W reversal film (Scala, Fomapan R, dr5), or a color slide through the B&W Filter.
+- New: **Pick Dmin and Dmax by hand** — for difficult frames that auto metering reads wrong; Film Base moves to the Analysis Readouts header.
+- New: **Roll Average stays current** — new frames follow it, a crop or Metering change measures again in the background, and one Undo covers a change to several frames.
+- New: **Frame No. sort** for the Film Strip and the contact sheet order. @red-prs
+- New: **Norwegian Bokmål and Vietnamese translations**. @jboneng @dinhkarate
+- New: **More edge prints** — Fujicolor 100, Superia Premium 400, Superpan 200, Fujifilm 400 and Lomography CN 400. @red-prs
+- New: **Memory limits sized to the machine** — Preferences recommends cache sizes from RAM. @jondestoppeleire
+- New: **Multisampling on the Nikon LS-50** — nkscan 0.18 adds it.
+- Change: **Film Strip** — the frame tooltip names each mark.
+- Change: **Plustek** — resolutions from a fixed list, pyopticfilm 1.3.9. @jboneng
+- Fix: **Roll cards** — a card edited or undone back to the roll's value unlocks, and the scanning setup moves the roll's Raw Decode.
+- Fix: **Slides and Positive files** — camera RAW slide color, Draw Region, slides out of the Roll Average, Positive JPEG ICC profiles. @thetalkingdrum
+- Fix: **Auto Crop** — keeps the whole picture on high-key frames and on slides. @kurtwindisch @thetalkingdrum
+- Fix: **Film scanners** — camera Optics and Recovery stay off scanner frames, SANE film scanners are detected by device type, and Avision color depth is set. @kurtwindisch @packetscrub
+- Fix: **Lento Dock** — the scan starts at the S press. @cimelab
+- Fix: **Export** — an 8-bit export converts color at 16 bits, and an RGB Scan triplet merges in float. @thetalkingdrum
+
+## 0.67.0
+
+- New: **B&W from color negatives** — print through a Yellow, Orange, Red or Green contrast filters.
+- New: **Improved Roll Average** — baselines always measure in the background, and a Roll Average peek (hold U) shows the frame on its roll or scene average.
+- New: **Export Size view** — see the frame and grain at export size; resized exports sharpen at their final resolution.
+- New: **German translation** @shearer.
+- New: **Rolls** — Save to Folder Roll, Restore Removed Frames… and Unload All…; Film Base and Half Frame work with no roll. @kurtwindisch
+- New: **Scanning and merges** — scan exposure warnings, Trichrome aligns to green, the three Trichrome shots join into one Film Strip frame with Edit Trichrome and Split Trichrome, better stitch seams. @seanharding @matthoosier @kurtwindisch
+- New: **Kodak Ektacolor Edge** print stock.
+- New: **Lento Dock** as a camera-scanning light — Next Frame and Whole Strip film advance, Eject, a Flat Field shot of the empty dock after the strip, and the dock's S button as Scan. @cimelab
+- New: **Source Encoding** for Positive TIFFs — Auto reads the ICC profile, or pick Linear or 2.2. @thetalkingdrum
+- New: **Auto Masking** sets Sharpening Masking from the film grain.
+- Change: **Contrast Mask** — refined and based on algorithm from Fuji Frontier Hypertone.
+- Change: **Halation, Glow and Diffusion** — more natural light spread
+- Change: **Interface** — more UI revinements, evenly spaced canvas backgrounds, new Roll tab card order, improved status/progress monitoring.
+- Change: **Chroma Denoise** — on at 2.5 by default, skipped in B&W.
+- Change: **Speed** — more stuff moved to Rust negpy_core, faster export and TIFF/DNG previews.
+- Fix: **macOS** — pinch zoom, canvas resize and a wait-cursor crash. @PabloRuizCuevas @seanharding
+- Fix: **Export and metadata** — TIFF Exif, Bake on Export, Subfolder of Source, EV parsing, frame numbering, and Add Custom gear opens in My Gear. @jharlap @red-prs @kurtwindisch @activexray
+- Fix: **Camera scanning** — a manual Canon lens grays out the aperture stepper, and a scan leaves its aperture alone. @RafatH0ssain
+- Fix: **File loading** — trimmed Pakon frames and camera captures of B&W film. @thetalkingdrum @seanharding
+
 ## 0.66.0
 
 - New: **Interface redesign** — simpler panels with one shared look; fine-tune controls fold behind chevrons, and toggles replace checkboxes.

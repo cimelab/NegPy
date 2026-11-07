@@ -6,6 +6,7 @@ from dataclasses import dataclass
 from enum import StrEnum
 
 from negpy.features.process.models import ProcessMode
+from negpy.infrastructure.capture.base import BulbRelease
 
 
 class WhiteCaptureMode(StrEnum):
@@ -46,16 +47,22 @@ class ScanlightSettings:
     iso: str = ""  # RGB preset's calibrated ISO/aperture, forced on the body at scan time
     aperture: str = ""  # "" for a manual-aperture lens (set by hand on the ring)
     single_capture: bool = False  # the RGB preset lights R, G and B together for one exposure
+    blend_capture: bool = False  # the preset lights R, G and B in turn inside one Bulb exposure
+    bulb_release: BulbRelease = BulbRelease.USB  # what holds a Blend exposure's shutter open
+    blend_sensor_profile: str = ""  # the sensor crosstalk profile a Blend frame's roll takes; Blend needs one
     inter_exposure_delay_ms: int = 0
     white_process_mode: WhiteCaptureMode = WhiteCaptureMode.AUTO
     port: str = ""  # Scanlight serial port ("" = autodetect); the camera needs no address
     keep_light_on: bool = False  # re-light the framing light after each scan without Live View
+    film_transport: str = "off"  # a light that moves film: "off", "next" (one frame per Scan) or "strip" (the whole strip)
+    strip_flat: bool = False  # after a whole strip ejects, shoot the empty dock for the roll's Flat Field profile
     capture_delay_s: float = 0.0  # seconds Scan and Retake hold the first exposure
     adopted_presets: tuple[str, ...] = ()  # built-in presets added to the dropdown; the rest stay under +
 
     def __post_init__(self) -> None:
         # A dict saved before the process-mode rename still carries the old names.
         object.__setattr__(self, "white_process_mode", WhiteCaptureMode(self.white_process_mode))
+        object.__setattr__(self, "bulb_release", BulbRelease(self.bulb_release))
         # A saved list reads back as a list; anything else in the file is not a list of names.
         adopted = self.adopted_presets if isinstance(self.adopted_presets, (list, tuple)) else ()
         object.__setattr__(self, "adopted_presets", tuple(n for n in adopted if isinstance(n, str)))

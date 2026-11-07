@@ -10,12 +10,12 @@ import math
 import os
 import threading
 import time
-from dataclasses import dataclass, field
-from typing import Optional
+from dataclasses import dataclass, field, replace
+from typing import Callable, Optional
 
 from PyQt6.QtCore import QObject, pyqtSignal, pyqtSlot
 
-from negpy.infrastructure.capture.base import CAPTURE_ORDER, CaptureSettings, Channel
+from negpy.infrastructure.capture.base import CAPTURE_ORDER, BulbRelease, CaptureSettings, Channel
 from negpy.infrastructure.capture.gphoto import (
     CameraCapabilities,
     CameraClaimedError,
@@ -24,11 +24,12 @@ from negpy.infrastructure.capture.gphoto import (
     LiveViewUnsupported,
     list_cameras,
 )
-from negpy.infrastructure.capture.protocol import describe_hardware, has_ir_channel, has_white_channel
-from negpy.infrastructure.capture.scanlight import Scanlight
+from negpy.infrastructure.capture.lights import Light, open_light
 from negpy.infrastructure.capture.settings import WhiteCaptureMode
+from negpy.kernel.system.config import APP_CONFIG
 from negpy.kernel.system.logging import get_logger
 from negpy.services.capture.calibration import (
+    CLIP_CEILING,
     REFERENCE_LEVELS,
     REFERENCE_SHUTTER,
     CalibrationExposureError,
@@ -36,10 +37,40 @@ from negpy.services.capture.calibration import (
     Roi,
     normalize_start_point,
     scan_ladder,
+    true_seconds,
 )
 from negpy.services.capture.service import CaptureError, CaptureService, capture_single
 
 logger = get_logger(__name__)
+
+
+# A strip that never reports its end stops here.
+_STRIP_FRAME_LIMIT = 60
+# The bare light is several stops brighter than the film base the preset exposes for.
+_FLAT_START_FACTOR = 1 / 8
+_FLAT_ATTEMPTS = 4
+_FLAT_LOW, _FLAT_HIGH, _FLAT_TARGET = 0.45, 0.92, 0.75  # brightest channel, fraction of the clip level
+_FLAT_CLIPPED_STEP = 1 / 4  # a clipped reference hides its level, so step down two stops
+
+
+def _current_shutter(camera) -> str:
+    """The body's shutter label, or "" when the camera does not report it."""
+    read = getattr(camera, "read_settings", None)
+    info = (read() if read else {}).get("shutter") or {}
+    options, cur = info.get("options") or [], info.get("cur", -1)
+    return next((str(o.get("label", "")) for o in options if o.get("raw") == cur), "")
+
+
+def _flat_peak(path: str) -> float:
+    """The brightest channel's high percentile over the lit area, as a fraction of the clip level."""
+    import numpy as np
+
+    from negpy.infrastructure.capture.raw_demosaic import linear_demosaic
+
+    rgb = linear_demosaic(path, half_size=True).astype(np.float32)
+    brightest = rgb.max(axis=2)
+    lit = brightest > 0.35 * np.percentile(brightest, 95)
+    return float(max(np.percentile(rgb[..., c][lit], 99.5) for c in range(3)) / CLIP_CEILING)
 
 
 @dataclass(frozen=True)
@@ -62,12 +93,19 @@ class CaptureRequest:
     aperture: str = ""
     as_roll: bool = False
     single_capture: bool = False  # RGB preset shot as one exposure with all three LEDs lit
+    blend_capture: bool = False  # triplet preset shot as one Bulb exposure, the LEDs lit in turn
+    bulb_release: BulbRelease = BulbRelease.USB  # what holds the Blend exposure's shutter open
+    keep_bulb: bool = False  # a strip frame: leave the camera in Bulb for the next Blend frame
     sensor_profile: str = ""  # the single-capture preset's sensor profile, for the frame's roll
     channels: tuple[str, ...] = ("R", "G", "B")  # the visible exposures to shoot; a subset shoots alone, into its own files
     shutter_ir: str = ""  # the infrared exposure's own shutter; "" = the body's current
     infrared: bool = False  # end the frame with an infrared exposure at shutter_ir
     capture_delay_s: float = 0.0  # seconds to hold the first exposure; Stop ends the wait
     end_light: tuple[int, int, int, int] = (0, 0, 0, 0)  # r, g, b, w left lit after a successful frame; zeros = off
+    advance_film: bool = False  # after a Scan, move the film to the next frame on a light that has a film transport
+    whole_strip: bool = False  # scan and advance frame after frame until the strip ends or Stop
+    strip_flat: bool = False  # with whole_strip: after the eject, shoot the empty dock for the roll's Flat Field profile
+    shutter_ladder: tuple[str, ...] = ()  # the body's shutter labels, for the flat's own exposure
 
 
 @dataclass(frozen=True)
@@ -99,6 +137,7 @@ class CalibrationRequest:
     start_levels: tuple[int, int, int] = REFERENCE_LEVELS
     start_shutter: str = REFERENCE_SHUTTER
     single_capture: bool = False  # solve for R, G and B lit together in one exposure
+    measure_sensor: bool = False  # a triplet run also measures a sensor unmix, for a Blend preset
 
 
 # The central half of the frame, the region a sensor profile built from files measures.
@@ -132,11 +171,34 @@ def _setting_label(info) -> str:
     return next((str(o.get("label", "")) for o in info.get("options", []) if o.get("raw") == info.get("cur")), "")
 
 
+def _blend_seconds(camera, shutter: str) -> float:
+    """The true time of the Trichrome shutter, which each Blend channel gets as its light. A built-in
+    Trichrome preset names none, so the body's current step stands in."""
+    info = camera.read_settings().get("shutter", {}) if hasattr(camera, "read_settings") else {}
+    ladder = scan_ladder(str(o.get("label", "")) for o in info.get("options", [])) if isinstance(info, dict) else ()
+    label = shutter.strip() or _setting_label(info)
+    try:
+        seconds = true_seconds(label, ladder)
+    except (TypeError, ValueError):
+        seconds = 0.0
+    if seconds <= 0:
+        raise CaptureError(tr("Blend needs a shutter time. Set the camera's shutter to a time, not Bulb, then scan again."))
+    return seconds
+
+
 def _shutters_or_none(shutters: tuple[str, str, str]):
     """UI shutter strings → capture-settings form (None = leave the camera as-is)."""
     if not any(s.strip() for s in shutters):
         return None
     return tuple(s.strip() or None for s in shutters)
+
+
+@dataclass
+class _EarlyAdvance:
+    """A film move started while the camera processes a Blend frame, and its `_advance_film` result."""
+
+    thread: Optional[threading.Thread] = None
+    moved: Optional[bool] = None
 
 
 class CaptureWorker(QObject):
@@ -154,6 +216,9 @@ class CaptureWorker(QObject):
     cancelled = pyqtSignal()
     error = pyqtSignal(str)
     status = pyqtSignal(str)
+    flat_captured = pyqtSignal(str)  # the bare-light reference shot after a strip
+    strip_finished = pyqtSignal(int, bool)  # frames scanned, the strip ran to its end
+    scan_button_pressed = pyqtSignal()  # the light's own Scan button
     live_view_started = pyqtSignal(str)  # jpeg path being refreshed
     #: This body advertises no CAPTURE_PREVIEW, so no stream was started (issue #621). Carries
     #: the operator-facing reason; scanning itself is unaffected.
@@ -177,7 +242,7 @@ class CaptureWorker(QObject):
 
     def __init__(self) -> None:
         super().__init__()
-        self._light: Optional[Scanlight] = None
+        self._light: Optional[Light] = None
         self._light_port = ""
         self._idle_light = (0, 0, 0, 0)  # the last live-control color, put back after a sensor measurement
         self._cancel = threading.Event()
@@ -185,6 +250,8 @@ class CaptureWorker(QObject):
         # single PTP claim, and GphotoCamera serialises the three internally. Held open across
         # frames, closed on error and at shutdown.
         self._camera: Optional[GphotoCamera] = None
+        # Set by a Blend strip: runs once a frame's shutter closes, to move the film while the camera finishes.
+        self._after_shutter: Optional[Callable[[], None]] = None
         self._model = ""
         # True after an open failed because another program holds the USB claim; drives the
         # "in use by another app" camera status. Cleared by the next open attempt that does
@@ -255,7 +322,7 @@ class CaptureWorker(QObject):
 
     # ----- light -----
 
-    def _ensure_light(self, port: str) -> Scanlight:
+    def _ensure_light(self, port: str) -> Light:
         # Reuse the held connection only while it is the same port and still alive. An
         # unplugged Scanlight leaves a dead handle, and without the health check we would reuse
         # it and never re-detect the device after it is plugged back in.
@@ -267,8 +334,16 @@ class CaptureWorker(QObject):
             except Exception:
                 logger.exception("error closing previous Scanlight connection")
             self._light = None
-        self._light = Scanlight(port or None)
+        self._light = open_light(port or None)
         self._light_port = port
+        take_control = getattr(self._light, "take_control", None)
+        if take_control is not None:
+            try:
+                take_control()
+            except Exception:
+                logger.exception("could not put the light under host control")
+        if hasattr(self._light, "on_scan_button"):
+            self._light.on_scan_button = self.scan_button_pressed.emit
         return self._light
 
     @pyqtSlot(int, int, int, int, str)
@@ -289,7 +364,14 @@ class CaptureWorker(QObject):
     # ----- capture -----
 
     @pyqtSlot(CaptureRequest)
-    def run_capture(self, req: CaptureRequest) -> None:
+    def run_capture(self, req: CaptureRequest) -> bool:
+        """Capture one frame, or a whole strip. True when the frame is on disk; a failure or Stop
+        has emitted `error` or `cancelled`."""
+        if (req.whole_strip or req.advance_film) and not req.is_retake and not self._feed_strip(req.port):
+            return False
+        if req.whole_strip:
+            self._run_strip(req)
+            return False
         _t0 = time.perf_counter()
         try:
             if not self._holds_camera():
@@ -313,9 +395,9 @@ class CaptureWorker(QObject):
                     shutter=(req.shutters[0] or None),
                     cancel=self._cancel,
                 )
-                self.finished.emit([path])
+                self._finish_frame(req, [path])
                 self._report_clipping(path)
-                return
+                return True
 
             # RGB / white-preset captures drive the Scanlight, so it must be connected.
             light = self._ensure_light(req.port)
@@ -376,9 +458,9 @@ class CaptureWorker(QObject):
                     cancel=self._cancel,
                     end_light=visible_end,
                 )
-                self.finished.emit(_with_ir([path]))
+                self._finish_frame(req, _with_ir([path]))
                 self._report_clipping(path)
-                return
+                return True
 
             settings = CaptureSettings(
                 roll_name=req.roll_name,
@@ -394,9 +476,25 @@ class CaptureWorker(QObject):
             if req.single_capture:  # one narrowband exposure, imported as an ordinary single RAW
                 self.status.emit(tr("Capturing…"))
                 path = service.capture_rgb_single(settings, cancel=self._cancel, end_light=visible_end)
-                self.finished.emit(_with_ir([path]))
+                self._finish_frame(req, _with_ir([path]))
                 self._report_clipping(path)
-                return
+                return True
+
+            if req.blend_capture:  # R, G and B in turn inside one Bulb exposure, imported as a single RAW
+                self.status.emit(tr("Capturing Blend exposure…"))
+                path = service.capture_blend(
+                    settings,
+                    seconds=_blend_seconds(camera, req.shutters[0]),
+                    release=BulbRelease(req.bulb_release),
+                    cancel=self._cancel,
+                    on_channel=self.channel.emit,
+                    end_light=visible_end,
+                    keep_bulb=req.keep_bulb,
+                    on_closed=self._after_shutter,
+                )
+                self._finish_frame(req, _with_ir([path]))
+                self._report_clipping(path)
+                return True
 
             if tuple(req.channels) != ("R", "G", "B"):  # a subset of the visible exposures, each shot alone
                 paths = []
@@ -421,8 +519,8 @@ class CaptureWorker(QObject):
                             end_light=visible_end if [ch] == last else None,
                         )
                     )
-                self.finished.emit(_with_ir(paths))
-                return
+                self._finish_frame(req, _with_ir(paths))
+                return True
 
             self.status.emit(tr("Capturing R / G / B…"))
             _names = {"R": mark("red"), "G": mark("green"), "B": mark("blue")}
@@ -439,17 +537,202 @@ class CaptureWorker(QObject):
                 end_light=visible_end,
             )
 
-            self.finished.emit(_with_ir(result.paths))
+            self._finish_frame(req, _with_ir(result.paths))
+            return True
         except Exception as e:
             self._cleanup_partial_frame(req)  # keep the folder a clean multiple of 3 for NegPy's grouper
             if self._cancel.is_set():
                 # Deliberate cancellation is not a camera failure. The staged capture was
                 # discarded before promotion, so keep the healthy live-view session.
                 self.cancelled.emit()
-                return
+                return False
             self._close_camera()  # discard a possibly-broken held session
             logger.exception("capture failed")
             self.error.emit(str(e))
+            return False
+
+    def _finish_frame(self, req: CaptureRequest, paths: list) -> None:
+        """Report the frame, then move the film when asked. The import starts at once; the next
+        capture waits on this thread until the film is in place. A Retake never moves the film."""
+        self.finished.emit(paths)
+        if req.advance_film and not req.is_retake:
+            self._advance_film(req.port)
+
+    def _feed_strip(self, port: str) -> bool:
+        """Feed a strip that waits at the light's entrance to its first frame. False when the feed
+        failed and `error` has been emitted."""
+        try:
+            light = self._ensure_light(port)
+            if not getattr(light, "strip_waiting", lambda: False)():
+                return True
+            self.status.emit(tr("Feeding the strip to the first frame…"))
+            light.insert_strip()
+        except Exception as exc:  # noqa: BLE001
+            logger.exception("strip feed failed")
+            self.error.emit(tr("The dock did not feed the strip: {error}. Insert it again.", error=exc))
+            return False
+        return True
+
+    def _advance_film(self, port: str, eject: bool = True) -> Optional[bool]:
+        """Move the light's film one frame. True at the end of the strip, False when the next frame
+        is in place, None when the light has no film transport or the move failed. With `eject`,
+        the strip leaves the dock at its end."""
+        try:
+            light = self._ensure_light(port)
+            advance = getattr(light, "advance_frame", None)
+            if advance is None:
+                return None
+            self.status.emit(tr("Moving the film to the next frame…"))
+            at_end = advance() is None
+        except Exception as exc:  # noqa: BLE001
+            logger.exception("film advance failed")
+            self.status.emit(tr("The film did not move: {error}. Move it with the dock's buttons.", error=exc))
+            return None
+        if not at_end:
+            self.status.emit(tr("The next frame is in place."))
+            return False
+        if not eject:
+            return True
+        # The last frame stops in the window, short of the exit.
+        if self._eject(light) is not False:
+            self.status.emit(tr("End of the strip. Insert the next strip."))
+        return True
+
+    def _eject(self, light) -> Optional[bool]:
+        """True when the strip is out, False when the eject failed, None for a light that has no eject."""
+        eject = getattr(light, "eject", None)
+        if eject is None:
+            return None
+        try:
+            self.status.emit(tr("Ejecting the film…"))
+            eject()
+        except Exception as exc:  # noqa: BLE001
+            logger.exception("eject failed")
+            self.status.emit(tr("The film did not eject: {error}. Use the dock's buttons.", error=exc))
+            return False
+        return True
+
+    @pyqtSlot(str)
+    def eject_film(self, port: str) -> None:
+        """The Eject button: move the strip out of a light with a film transport."""
+        try:
+            light = self._ensure_light(port)
+        except Exception as exc:  # noqa: BLE001
+            self.status.emit(tr("The film did not eject: {error}. Use the dock's buttons.", error=exc))
+            return
+        if self._eject(light):
+            self.status.emit(tr("The film is out. Insert the next strip."))
+
+    def _run_strip(self, req: CaptureRequest) -> None:
+        """Scan frame after frame, moving the film after each, until the strip ends, a frame fails
+        or Stop. At the end the strip leaves the dock; with `strip_flat`, the empty dock is shot next.
+        The dock cannot advance after it moves the film out of the window and back, so the flat
+        never comes first."""
+        scanned, at_end = 0, False
+        try:
+            for frame_number in range(req.frame_number, req.frame_number + _STRIP_FRAME_LIMIT):
+                if self._cancel.is_set():
+                    self.cancelled.emit()
+                    return
+                one = replace(req, frame_number=frame_number, whole_strip=False, strip_flat=False, advance_film=False, keep_bulb=True)
+                early = _EarlyAdvance()
+                if req.blend_capture:
+                    self._after_shutter = lambda: self._start_advance(req.port, early)
+                try:
+                    captured = self.run_capture(one)
+                finally:
+                    self._after_shutter = None
+                    if early.thread is not None:
+                        early.thread.join()
+                if not captured:
+                    if early.thread is not None:
+                        self.status.emit(
+                            tr(
+                                "Frame {frame} failed after the film moved on. Move the film back one frame, then click Retake.",
+                                frame=frame_number,
+                            )
+                        )
+                    return
+                scanned += 1
+                moved = early.moved if early.thread is not None else self._advance_film(req.port, eject=False)
+                if moved is None:
+                    break
+                if moved:
+                    at_end = True
+                    break
+        finally:
+            self._release_bulb()  # before the flat, which meters from the camera's own shutter step
+        flat_error = ""
+        if at_end and self._eject(self._ensure_light(req.port)) and req.strip_flat and not self._cancel.is_set():
+            try:
+                self.flat_captured.emit(self._capture_flat(req))
+            except Exception as exc:  # noqa: BLE001
+                if not self._cancel.is_set():
+                    logger.exception("flat field capture failed")
+                    flat_error = tr("Flat Field: {error}", error=exc)
+        self.strip_finished.emit(scanned, at_end)
+        if flat_error:
+            self.status.emit(flat_error)
+
+    def _start_advance(self, port: str, result: "_EarlyAdvance") -> None:
+        """Move the film on a thread of its own once a Blend frame's shutter has closed, so the move
+        overlaps the camera's processing of the shot. `result` gets the thread and the move's outcome."""
+
+        def _run() -> None:
+            result.moved = self._advance_film(port, eject=False)
+
+        result.thread = threading.Thread(target=_run, name="film-advance", daemon=True)
+        result.thread.start()
+
+    def _release_bulb(self) -> None:
+        """Put back the shutter step a Blend strip held at Bulb. A failure is logged, never raised:
+        the next plain capture and the session's close put it back as well."""
+        release = getattr(self._camera, "release_bulb", None)
+        if release is None:
+            return
+        try:
+            release()
+        except Exception:  # noqa: BLE001
+            logger.exception("could not put the camera's shutter back after the strip")
+
+    def _capture_flat(self, req: CaptureRequest) -> str:
+        """Shoot the empty dock at the frame's LED levels and a shutter that puts the brightest
+        channel in range. The file goes beside the Flat Field profiles, never into the roll."""
+        from negpy.services.capture.meter import shutter_at_most
+
+        camera = self._acquire_camera()
+        light = self._ensure_light(req.port)
+        ladder = scan_ladder(req.shutter_ladder)
+        start = next((label for label in (req.shutters[0], _current_shutter(camera)) if label), "")
+        if not ladder or not start:
+            raise CaptureError(tr("The camera reports no shutter speeds."))
+        shutter = shutter_at_most(true_seconds(start, ladder) * _FLAT_START_FACTOR, ladder) or ladder[0]
+        folder = os.path.join(APP_CONFIG.flatfield_dir, "references")
+        service = CaptureService(light, camera)
+        self.status.emit(tr("Shooting the Flat Field on the empty dock…"))
+        for _attempt in range(_FLAT_ATTEMPTS):
+            settings = CaptureSettings(
+                roll_name=f"{req.roll_name}_FlatField",
+                frame_number=0,
+                output_folder=folder,
+                levels=req.levels,
+                settle_s=req.settle_s,
+                shutters=(shutter, shutter, shutter),
+                iso=req.iso or None,
+                aperture=req.aperture or None,
+            )
+            path = service.capture_rgb_single(settings, cancel=self._cancel)
+            peak = _flat_peak(path)
+            if _FLAT_LOW <= peak <= _FLAT_HIGH:
+                return path
+            factor = _FLAT_CLIPPED_STEP if peak > _FLAT_HIGH else _FLAT_TARGET / max(peak, 1e-3)
+            better = shutter_at_most(true_seconds(shutter, ladder) * factor, ladder)
+            if better is None or better == shutter:
+                break
+            shutter = better
+        if peak <= _FLAT_HIGH:
+            return path  # darker than ideal, but unclipped: the gain is a ratio
+        raise CaptureError(tr("The Flat Field clips at the fastest shutter. Close the aperture or lower the ISO."))
 
     def _report_clipping(self, path: str) -> None:
         """Emit `clipped` when a single-file capture clips as Meter judges a probe. Runs after
@@ -484,7 +767,7 @@ class CaptureWorker(QObject):
         Skipped for white-light captures (a single frame is already complete, not a triplet)
         and for retakes (the frame existed complete; overwriting leaves three files in place).
         """
-        if req.white_mode or req.single_capture or req.is_retake or not req.rgb_mode:
+        if req.white_mode or req.single_capture or req.blend_capture or req.is_retake or not req.rgb_mode:
             return  # single-file captures (white / single RGB / normal) aren't triplets → nothing to keep aligned
         prefix = f"{req.roll_name}_Frame{req.frame_number:03d}_"  # trailing _ → only channel files
         try:
@@ -529,7 +812,7 @@ class CaptureWorker(QObject):
         except Exception:
             camera = False
         try:
-            self._ensure_light(port).get_fw_version()
+            self._ensure_light(port).describe()
             light = True
         except Exception:
             light = False
@@ -547,6 +830,7 @@ class CaptureWorker(QObject):
             "light_detail": "not connected",
             "light_has_white": True,
             "light_has_ir": False,
+            "light_moves_film": False,
             "usb_claimed_elsewhere": False,
             # Advertised abilities of the last body opened. Optimistic until a session has been
             # opened: never grey a control out on an uninspected body.
@@ -613,10 +897,11 @@ class CaptureWorker(QObject):
         except Exception:
             logger.exception("camera poll failed")
         try:
-            fw, hw = self._ensure_light(port).get_fw_version()
-            status["light_ok"], status["light_detail"] = True, f"{describe_hardware(hw)} (fw{fw})"
-            status["light_has_white"] = has_white_channel(hw)
-            status["light_has_ir"] = has_ir_channel(hw)
+            light = self._ensure_light(port)
+            detail, has_white, has_ir = light.describe()
+            status["light_ok"], status["light_detail"] = True, detail
+            status["light_has_white"], status["light_has_ir"] = has_white, has_ir
+            status["light_moves_film"] = hasattr(light, "advance_frame")
         except Exception:
             pass
         self.poll_status.emit(status)
@@ -733,6 +1018,7 @@ class CaptureWorker(QObject):
                     progress=self.calibration_progress.emit,
                     cancel=self._cancel,
                     single_capture=req.single_capture,
+                    measure_sensor=req.measure_sensor,
                 )
             self.calibration_finished.emit(result)
         except CalibrationExposureError as e:

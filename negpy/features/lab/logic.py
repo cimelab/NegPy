@@ -211,6 +211,11 @@ def _saturation_block(img: ImageBuffer, saturation: float, skin_protection: floa
 CHROMA_DENOISE_MIN_SIGMA = 0.25
 
 
+def chroma_denoise_radius(radius: float, mono: bool) -> float:
+    """B&W has no chroma to denoise, so the stage never runs there."""
+    return 0.0 if mono else radius
+
+
 def chroma_denoise_sigma(radius: float, scale_factor: float) -> float:
     """The low-pass sigma in render pixels for both engines; 0.0 when the stage does not run."""
     sigma = radius * scale_factor
