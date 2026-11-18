@@ -849,6 +849,15 @@ Shown while a Scanlight is connected. A preset holds the light levels and the ca
 *   **IR Shutter** and **Infrared** (lights with infrared LEDs): adds an infrared exposure to each scan for dust removal, saved as an `_IR` file. It needs a camera that sees infrared (full-spectrum or converted) and manual focus. Color film only.
 *   **Channel Delay**: a pause between the red, green and blue exposures, for cameras that need it.
 
+<!-- panel:scan_hdr -->
+### HDR Bracket
+
+Shoots each frame as a bracket of longer and longer exposures and merges it into one DNG. Use it for dense film that one exposure cannot hold, such as a slide's shadows. It works with white light, your own light and a Single Exposure preset. Trichrome and Blend take no bracket.
+
+*   **HDR Bracket**: turns bracketing on for every Scan and Retake. The DNG opens as the frame's RAW. The shots move into an `HDR Brackets` subfolder.
+*   **Calibrate** (or **Bracket** in Live View): click the brightest area, such as clear film base, then the densest area. NegPy shoots one frame at the scan's exposure, measures the film's range and sets Shots and Step. Meter first, so the brightest area sits just under clipping.
+*   **Shots** and **Step**: how many exposures each frame takes, and how many stops longer each one is. The first shot is the normal exposure. NegPy makes each step longer with the shutter first, then sets the light level for the exact time.
+
 <!-- panel:scan_output -->
 ### Output
 

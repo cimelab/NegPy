@@ -84,6 +84,18 @@ from negpy.services.capture.calibration import (
 )
 from negpy.services.assets.sensor import SensorProfiles
 from negpy.services.capture.presets import PresetStore, ScanlightPreset, framing_levels
+from negpy.services.capture.bracket import (
+    BRIGHT_HIGH,
+    BRIGHT_LOW,
+    HDR_DEFAULT_SHOTS,
+    HDR_DEFAULT_STEP,
+    HDR_MAX_SHOTS,
+    HDR_MAX_STEP,
+    HDR_MIN_SHOTS,
+    HDR_MIN_STEP,
+    clamp_shots,
+    clamp_step,
+)
 
 _CAPTURE_BAR = tr("Capturing… %p%")  # the status strip's bar while a scan runs
 _BULB_RELEASE_TOOLTIP = tr("What holds the shutter open in Bulb: the camera's USB cable, or a release cable on the Scanlight.")
@@ -236,6 +248,7 @@ class ScanlightSidebar(QWidget):
         self._magnifier_on = False  # camera focus magnifier state (driven by clicks on the live image)
         self._magnifier_seen = False  # the state the stream last published, or a click's own
         self._metering = False  # a Meter probe is on the worker; Scan, Retake and Meter wait for it
+        self._bracket_pick = ""  # "bright" or "dense": the area the next live-view click places for the HDR bracket
         # Meter placed the exposure, or a Live View stepper set it, since the camera connected.
         self._exposure_chosen = False
         self._meter_raw: dict[str, int] = {}  # the body's shutter labels → raw indexes, read once per probe
@@ -419,6 +432,42 @@ class ScanlightSidebar(QWidget):
         self.dock_body.setVisible(False)
         cam.addWidget(self.dock_body)
         layout.addWidget(self.camera_body)
+
+        # HDR: a white-light or Single Exposure frame merged from a bracket into one DNG. Its own card
+        # (see right_panel), after the Preset card.
+        self.hdr_body = QWidget()
+        _hdr = QVBoxLayout(self.hdr_body)
+        _hdr.setContentsMargins(0, 0, 0, 0)
+        _hdr.setSpacing(THEME.space_md)
+        self.hdr_btn = labeled_toggle(
+            "fa5s.layer-group",
+            tr("HDR Bracket"),
+            self._settings.hdr_enabled,
+            tr(
+                "Shoot each frame as a bracket of longer exposures and merge it into one DNG, for dense film that one exposure cannot hold."
+            ),
+        )
+        self.hdr_calibrate_btn = labeled_action(
+            "fa5s.crosshairs",
+            tr("Calibrate"),
+            tr("Click the brightest area, then the densest area in Live View, and NegPy sets the shots and step"),
+        )
+        hdr_row = QHBoxLayout()
+        hdr_row.addWidget(self.hdr_btn, 1)
+        hdr_row.addWidget(self.hdr_calibrate_btn)
+        _hdr.addLayout(hdr_row)
+        self.hdr_shots_slider = CompactSlider(tr("Shots"), HDR_MIN_SHOTS, HDR_MAX_SHOTS, HDR_DEFAULT_SHOTS, step=1, precision=1)
+        self.hdr_shots_slider.setValue(clamp_shots(self._settings.hdr_count))
+        self.hdr_shots_slider.setToolTip(tr("How many exposures each frame takes, the base exposure included."))
+        self.hdr_step_slider = CompactSlider(tr("Step"), HDR_MIN_STEP, HDR_MAX_STEP, HDR_DEFAULT_STEP, step=0.1, precision=10, unit=" st")
+        self.hdr_step_slider.setValue(clamp_step(self._settings.hdr_ev_step))
+        self.hdr_step_slider.setToolTip(tr("How many stops longer each exposure is than the one before it."))
+        self.hdr_rail = SliderGroup(self.hdr_shots_slider, self.hdr_step_slider)
+        _hdr.addWidget(self.hdr_rail)
+        self.hdr_hint = hint_label("")
+        self.hdr_hint.setVisible(False)
+        _hdr.addWidget(self.hdr_hint)
+        layout.addWidget(self.hdr_body)
 
         # Scanlight only: _set_rgb_mode hides it for white-light scanning.
         self.light_body = QWidget()
@@ -611,6 +660,10 @@ class ScanlightSidebar(QWidget):
         self.light_btn.clicked.connect(self._on_light_clicked)
         self.lv_btn.toggled.connect(self._on_live_view_toggled)
         self.keep_light_btn.toggled.connect(self._on_keep_light_toggled)
+        self.hdr_btn.toggled.connect(self._on_hdr_toggled)
+        self.hdr_shots_slider.valueChanged.connect(self._on_hdr_changed)
+        self.hdr_step_slider.valueChanged.connect(self._on_hdr_changed)
+        self.hdr_calibrate_btn.clicked.connect(lambda _checked=False: self._on_bracket_requested())
         self.film_choice.currentChanged.connect(self._on_film_transport_changed)
         self.strip_flat_btn.toggled.connect(self._on_strip_flat_toggled)
         self.eject_btn.clicked.connect(lambda _checked=False: self.controller.eject_film(self._settings.port))
@@ -657,6 +710,9 @@ class ScanlightSidebar(QWidget):
         self.lv_window.scanRequested.connect(self._on_scan)
         self.lv_window.retakeRequested.connect(self._on_retake)
         self.lv_window.meterRequested.connect(self._on_meter)
+        self.lv_window.bracketRequested.connect(self._on_bracket_requested)
+        self.controller.capture_bracket_probe_finished.connect(self._on_bracket_probe_finished)
+        self.controller.capture_bracket_probe_failed.connect(self._on_bracket_probe_failed)
         self.meter_btn.clicked.connect(self._on_meter)
         self.lv_window.channelsChanged.connect(self._on_channels_changed)
         self.controller.capture_exposure_probe_finished.connect(self._on_probe_finished)
@@ -1302,6 +1358,7 @@ class ScanlightSidebar(QWidget):
     def _on_live_view_toggled(self, on: bool) -> None:
         if not on:
             self._meter_pending = False  # a stream closed before it streamed meters nothing
+            self._end_bracket_pick()
         if on and self.calib_window.isVisible() and not self._calibrating_preset:
             # A hand-off, not an exit. Closing calib_window here looks like the last camera
             # window going away, releases the session, and _start_live_view_worker() below then
@@ -1684,6 +1741,154 @@ class ScanlightSidebar(QWidget):
         self._settings = replace(self._settings, keep_light_on=on)
         self._save_settings()
 
+    # ----- HDR bracket -----
+
+    def _on_hdr_toggled(self, on: bool) -> None:
+        self._settings = replace(self._settings, hdr_enabled=on)
+        self._save_settings()
+        self._sync_hdr_ui()
+
+    def _on_hdr_changed(self, *_args) -> None:
+        self._settings = replace(
+            self._settings,
+            hdr_count=clamp_shots(self.hdr_shots_slider.value()),
+            hdr_ev_step=round(clamp_step(self.hdr_step_slider.value()), 2),
+        )
+        self._save_settings()
+
+    def _bracket_mode(self) -> bool:
+        """The frame is one file a bracket can merge into: white light, the operator's own light,
+        or a Single Exposure preset. Trichrome takes three files and Blend one Bulb exposure."""
+        s = self._settings
+        return not self._rgb_mode or s.white_mode or (s.single_capture and not s.blend_capture)
+
+    def _hdr_active(self) -> bool:
+        return self._settings.hdr_enabled and self._bracket_mode()
+
+    def _sync_hdr_ui(self) -> None:
+        """The rail shows while HDR is on. Trichrome and Blend gray the card out, under one hint."""
+        usable = self._bracket_mode()
+        idle = not self._scanning and not self._metering and not self._calibrating_preset
+        self.hdr_btn.setEnabled(usable and idle)
+        self.hdr_rail.setVisible(self._settings.hdr_enabled)
+        self.hdr_rail.setEnabled(usable and idle)
+        can_calibrate = usable and idle and self._camera_verified and self._camera_has_preview
+        self.hdr_calibrate_btn.setEnabled(can_calibrate or bool(self._bracket_pick))
+        self.lv_window.bracket_btn.setEnabled(can_calibrate or bool(self._bracket_pick))
+        self.lv_window.bracket_btn.setVisible(usable)
+        text = "" if usable else tr("HDR Bracket works with white light and Single Exposure. Trichrome and Blend take no bracket.")
+        self.hdr_hint.setText(text)
+        self.hdr_hint.setVisible(bool(text))
+
+    def _on_bracket_requested(self) -> None:
+        """Start the bracket calibration: the next two live-view clicks place the brightest and the
+        densest area. A second press while it waits ends it."""
+        if self._bracket_pick:
+            self._end_bracket_pick()
+            self._set_status(tr("HDR calibration canceled"))
+            return
+        if self._scanning or self._calibrating_preset or self._metering or not self._bracket_mode():
+            return
+        if not self.lv_btn.isChecked():
+            if not self.lv_btn.isEnabled():
+                return
+            self.lv_btn.setChecked(True)
+        if self._magnifier_on:
+            self._on_magnifier_off()
+        self.lv_image.clear_roi()
+        self._bracket_pick = "bright"
+        self._show_bracket_status(tr("HDR: click the brightest area, such as clear film base or a slide's clearest highlight"))
+        self._apply_gating()
+
+    def _on_bracket_click(self, fx: float, fy: float) -> None:
+        if self._bracket_pick == "bright":
+            self.lv_image.place_patch(fx, fy)
+            self._bracket_pick = "dense"
+            self._show_bracket_status(tr("HDR: now click the densest area of the picture, its darkest part in Live View"))
+            return
+        self.lv_image.place_patch(fx, fy, dense=True)
+        bright, dense = self.lv_image.roi(), self.lv_image.dense_roi()
+        self._bracket_pick = ""
+        if bright is None or dense is None:
+            self._apply_gating()
+            return
+        info = self._settings_json().get("shutter") or {}
+        shutter = next((str(o.get("label", "")) for o in info.get("options", []) if o.get("raw") == info.get("cur")), "")
+        if not shutter or shutter not in self._available_shutters(info, scanlight=False):
+            self._apply_gating()
+            self._show_bracket_status(tr("HDR: set the camera's shutter to a time, not Bulb, then calibrate again"))
+            return
+        if self._rgb_mode and not self._settings.white_mode:
+            # The probe meters the scan light, not the framing mix dimmed under it, as Meter does.
+            self.controller.set_scanlight_color(
+                int(self.r_slider.value()), int(self.g_slider.value()), int(self.b_slider.value()), 0, self._settings.port
+            )
+        from negpy.desktop.workers.capture_worker import BracketProbeRequest
+
+        self._metering = True
+        self._apply_gating()
+        self._show_bracket_status(tr("HDR: metering the two areas…"))
+        self.controller.start_bracket_probe(
+            BracketProbeRequest(shutter=shutter, bright_roi=bright, dense_roi=dense, session=self._lv_session)
+        )
+
+    def _end_bracket_pick(self) -> None:
+        if self._bracket_pick:
+            self._bracket_pick = ""
+            self.lv_image.clear_roi()
+            self._apply_gating()
+
+    def _show_bracket_status(self, text: str) -> None:
+        self.lv_window.set_status(text)
+        self._set_status(text, pinned=True)
+
+    @pyqtSlot(object)
+    def _on_bracket_probe_finished(self, report) -> None:
+        session, reading = report
+        if session != self._lv_session:
+            return
+        self._metering = False
+        self._relight_after_meter()
+        self.lv_image.clear_roi()
+        if reading.shots <= 1:
+            self.hdr_btn.setChecked(False)
+            text = tr("HDR: the film spans {stops:.1f} stops, which one exposure holds, so HDR Bracket is off", stops=reading.stops)
+        else:
+            for slider, value in ((self.hdr_shots_slider, reading.shots), (self.hdr_step_slider, reading.step)):
+                slider.blockSignals(True)
+                slider.setValue(value)
+                slider.blockSignals(False)
+            self._on_hdr_changed()
+            self.hdr_btn.setChecked(True)
+            text = tr(
+                "HDR: the film spans {stops:.1f} stops, so each frame takes {shots} shots {step:.1f} stops apart",
+                stops=reading.stops,
+                shots=reading.shots,
+                step=reading.step,
+            )
+        if reading.bright > BRIGHT_HIGH:
+            note = tr("The brightest area clips: click Meter, then calibrate again")
+            text = f"{text}. {note}"
+        elif reading.bright < BRIGHT_LOW:
+            note = tr("The brightest area is dim: click Meter, then calibrate again")
+            text = f"{text}. {note}"
+        self._apply_gating()
+        self._show_bracket_status(text)
+
+    @pyqtSlot(object)
+    def _on_bracket_probe_failed(self, report) -> None:
+        session, reason, camera_lost = report
+        if session != self._lv_session:
+            return
+        self._metering = False
+        self.lv_image.clear_roi()
+        if camera_lost:
+            self._on_error(tr("HDR calibration: {reason}", reason=reason))
+            return
+        self._relight_after_meter()
+        self._apply_gating()
+        self._show_bracket_status(tr("HDR calibration: {reason}", reason=reason))
+
     def _on_film_transport_changed(self, _index: int) -> None:
         self._settings = replace(self._settings, film_transport=self.film_choice.currentData())
         self.strip_flat_btn.setVisible(self._settings.film_transport == "strip")
@@ -1783,8 +1988,11 @@ class ScanlightSidebar(QWidget):
 
     def _on_magnifier_click(self, fx: float, fy: float) -> None:
         """Click the live view to magnify at that spot; click again for the full frame.
-        Only while the stream is running."""
+        Only while the stream is running. While the HDR bracket is calibrated, a click places its area."""
         if not self.lv_btn.isChecked():
+            return
+        if self._bracket_pick:
+            self._on_bracket_click(fx, fy)
             return
         self._reset_focus_meter()
         if not self._magnifier_available:
@@ -2204,6 +2412,8 @@ class ScanlightSidebar(QWidget):
             whole_strip=dock and s.film_transport == "strip" and not retake,
             strip_flat=dock and s.film_transport == "strip" and s.strip_flat and not retake,
             shutter_ladder=self._shutter_labels(),
+            hdr_count=clamp_shots(s.hdr_count) if self._hdr_active() else 1,
+            hdr_ev_step=clamp_step(s.hdr_ev_step),
         )
         self._capturing = tuple(channels) + (("IR",) if req.infrared else ()) if triplet else ()
         self._strip_running = req.whole_strip
@@ -2512,6 +2722,7 @@ class ScanlightSidebar(QWidget):
                 else tr("NegPy meters the clear base and solves the LED levels and the shutter for this stock, then saves the preset")
             )
         )
+        self._sync_hdr_ui()
         self.lv_window.scan_btn.setEnabled(can_scan)
         self.lv_window.retake_btn.setEnabled(can_retake)
         self.lv_window.channel_widget.setVisible(self._rgb_mode)

@@ -472,6 +472,7 @@ class RightPanel(QWidget):
         self.scan_framing_section = make_section(repo, tr("Framing"), "scan_framing", scan.framing_body, "fa5s.crop-alt", True)
         self.scan_camera_section = make_section(repo, tr("Camera"), "scan_camera", cam.camera_body, "fa5s.camera", True)
         self.scan_light_section = make_section(repo, tr("Preset"), "scan_light", cam.light_body, "fa5s.lightbulb", True)
+        self.scan_hdr_section = make_section(repo, tr("HDR Bracket"), "scan_hdr", cam.hdr_body, "fa5s.layer-group", True)
         output_body = QWidget()
         output_layout = QVBoxLayout(output_body)
         output_layout.setContentsMargins(0, 0, 0, 0)
@@ -492,6 +493,7 @@ class RightPanel(QWidget):
             self.scan_framing_section,
             self.scan_camera_section,
             self.scan_light_section,
+            self.scan_hdr_section,
             self.scan_output_section,
         ):
             cards_layout.addWidget(section)
@@ -544,6 +546,7 @@ class RightPanel(QWidget):
             (self.scan_framing_section, scan.framing_body, film),
             (self.scan_camera_section, cam.camera_body, not film),
             (self.scan_light_section, cam.light_body, not film),
+            (self.scan_hdr_section, cam.hdr_body, not film),
         ):
             section.setVisible(owned and not body.isHidden())
         scan.output_body.setVisible(film)

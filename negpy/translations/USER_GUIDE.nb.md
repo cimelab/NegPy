@@ -613,6 +613,15 @@ Vises mens en Scanlight er tilkoblet. En forhåndsinnstilling inneholder lysniv�
 *   **IR-lukker** og **Infrarød** (lys med infrarøde LED-er): legger til en infrarød eksponering i hver skanning for støvfjerning, lagret som en `_IR`-fil. Det krever et kamera som ser infrarødt (fullspekter eller konvertert) og manuell fokus. Bare fargefilm.
 *   **Kanalforsinkelse**: en pause mellom den røde, grønne og blå eksponeringen, for kameraer som trenger det.
 
+<!-- panel:scan_hdr src:0e174fe7 -->
+### HDR-serie
+
+Tar hvert bilde som en serie stadig lengre eksponeringer og slår dem sammen til én DNG. Bruk den for tett film som én eksponering ikke rommer, for eksempel skyggene i et lysbilde. Den virker med hvitt lys, ditt eget lys og en forhåndsinnstilling med Én eksponering. Trichrome og Blanding har ingen serie.
+
+*   **HDR-serie**: slår på serien for hver Skann og Ta på nytt. DNG-en åpnes som bildets RAW. Bildene flyttes til en undermappe `HDR Brackets`.
+*   **Kalibrer** (eller **Serie** i direktevisningen): klikk det lyseste området, for eksempel klar filmbase, og så det tetteste. NegPy tar ett bilde med skanneeksponeringen, måler filmens omfang og stiller inn Bilder og Trinn. Mål først, så det lyseste området ligger like under klipping.
+*   **Bilder** og **Trinn**: hvor mange eksponeringer hvert bilde tar, og hvor mange trinn lengre hver er. Det første bildet er den vanlige eksponeringen. NegPy gjør hvert trinn lengre med lukkeren først, og stiller så lysnivået for den nøyaktige tiden.
+
 <!-- panel:scan_output src:3015443a -->
 ### Utdata
 

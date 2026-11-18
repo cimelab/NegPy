@@ -30,6 +30,7 @@ _RING_RADIUS = 4  # corner radius of the ring
 _CLICK_SLOP = 5  # px: a release within this of the press counts as a click (scan pop-up magnifier)
 _CROSSHAIR_FRAC = 0.012  # a click samples a patch this wide (fraction of frame) — the rebate is narrow
 _CROSSHAIR_ASPECT = 2.5  # patch height : width in pixels → a vertical strip that fits the rebate bar
+_DENSE_FRAC = 0.02  # the HDR bracket's densest-area patch: a square this wide (fraction of frame)
 #: Zebra stripe period in frame pixels; highlights and blacks run opposite diagonals.
 _ZEBRA_PERIOD = 6
 _ZEBRA_ALPHA = 190
@@ -80,6 +81,8 @@ class RoiImageLabel(QLabel):
         self._pixmap: Optional[QPixmap] = None
         self._zebra: Optional[QImage] = None  # clipping overlay for the current frame, scan pop-up only
         self._roi: Optional[tuple[float, float, float, float]] = None
+        # The HDR bracket's second patch, on the densest part of the picture, drawn dashed.
+        self._dense_roi: Optional[tuple[float, float, float, float]] = None
         self._drag_start: Optional[QPoint] = None
         self.hover_ring = False  # when True a cursor hover draws the gray hover ring (Pick Better)
         self._hover = False
@@ -127,8 +130,24 @@ class RoiImageLabel(QLabel):
 
     def clear_roi(self) -> None:
         self._roi = None
+        self._dense_roi = None
         self.update()
         self.roiChanged.emit()
+
+    def place_patch(self, cx: float, cy: float, dense: bool = False) -> None:
+        """Drop the bright patch (the base strip) or the dense square on (cx, cy), in frame fractions."""
+        if not dense:
+            self._set_crosshair(cx, cy)
+            return
+        w = _DENSE_FRAC
+        aspect = self._pixmap.width() / self._pixmap.height() if self._pixmap is not None and self._pixmap.height() > 0 else 1.0
+        h = min(w * aspect, 1.0)
+        self._dense_roi = (min(max(cx - w / 2, 0.0), 1.0 - w), min(max(cy - h / 2, 0.0), 1.0 - h), w, h)
+        self.update()
+        self.roiChanged.emit()
+
+    def dense_roi(self) -> Optional[Roi]:
+        return Roi(*self._dense_roi) if self._dense_roi is not None else None
 
     def _set_crosshair(self, cx: float, cy: float) -> None:
         """Centre a small vertical sampling strip on (cx, cy), clamped inside the frame.
@@ -239,6 +258,14 @@ class RoiImageLabel(QLabel):
                 for color, width in ((with_alpha(THEME.mark_shadow, 160), 4), (QColor(THEME.mark_photo), 2)):
                     painter.setPen(QPen(color, width))
                     painter.drawRect(roi)
+            if self._dense_roi is not None:  # dashed, so it never reads as the bright patch
+                dense = self._roi_in_widget(self._dense_roi, draw_rect)
+                for color, width, style in (
+                    (with_alpha(THEME.mark_shadow, 160), 4, Qt.PenStyle.SolidLine),
+                    (QColor(THEME.mark_photo), 2, Qt.PenStyle.DashLine),
+                ):
+                    painter.setPen(QPen(color, width, style))
+                    painter.drawRect(dense)
         else:
             painter.fillRect(self.rect(), QColor(THEME.bg_dark))  # black while there's no frame (e.g. stream starting)
             if self._loading:  # stream starting → video-player-style buffering hint

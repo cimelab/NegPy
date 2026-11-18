@@ -109,6 +109,7 @@ class LiveViewWindow(QDialog):
     scanRequested = pyqtSignal()
     retakeRequested = pyqtSignal()
     meterRequested = pyqtSignal()
+    bracketRequested = pyqtSignal()
     channelsChanged = pyqtSignal(str)  # the letter whose toggle moved: R, G, B or IR
     captureDelayChanged = pyqtSignal(float)  # seconds, stepped on the toolbar's delay stepper
 
@@ -170,6 +171,13 @@ class LiveViewWindow(QDialog):
             tr("Set the shutter from one RAW probe: a negative's base or a slide's highlights, just under clipping"),
         )
         bar.addWidget(self.meter_btn, 1)
+        # Two clicks on the picture, the brightest and the densest area, set the HDR bracket.
+        self.bracket_btn = labeled_action(
+            "fa5s.layer-group",
+            tr("Bracket"),
+            tr("Calibrate the HDR bracket: click the brightest area, then the densest area, and NegPy sets the shots and step"),
+        )
+        bar.addWidget(self.bracket_btn, 1)
         # Exposure readouts of the preview frame.
         self.histogram_btn = tool_toggle("fa5s.chart-area", "", tr("Show the frame's R, G and B histogram under the image"))
         self.zebra_btn = tool_toggle("fa5s.grip-lines", "", tr("Hatch the clipped pixels in the Clipping Overlay colors"))
@@ -257,6 +265,7 @@ class LiveViewWindow(QDialog):
         self.scan_btn.clicked.connect(lambda: self.scanRequested.emit())
         self.retake_btn.clicked.connect(lambda: self.retakeRequested.emit())
         self.meter_btn.clicked.connect(lambda: self.meterRequested.emit())
+        self.bracket_btn.clicked.connect(lambda: self.bracketRequested.emit())
 
         # Pin Scan as the dialog's permanent default button. Without this, Qt hands "default"
         # status to whichever autoDefault button was clicked most recently, so pressing Retake
@@ -269,6 +278,7 @@ class LiveViewWindow(QDialog):
             "live_view_scan_space": self.scan_btn,
             "live_view_retake": self.retake_btn,
             "live_view_meter": self.meter_btn,
+            "live_view_bracket": self.bracket_btn,
             "live_view_histogram": self.histogram_btn,
             "live_view_zebra": self.zebra_btn,
             "live_view_capture_red": self.channel_btns["R"],

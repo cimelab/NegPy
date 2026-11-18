@@ -90,6 +90,7 @@ from negpy.features.process.logic import (
 )
 from negpy.features.stitch.models import stitch_hash, stitch_name
 from negpy.desktop.workers.capture_worker import (
+    BracketProbeRequest,
     CalibrationRequest,
     SensorResponseRequest,
     CaptureRequest,
@@ -724,6 +725,9 @@ class AppController(QObject):
     exposure_probe_requested = pyqtSignal(ExposureProbeRequest)
     capture_exposure_probe_finished = pyqtSignal(object)  # (session, MeterReading)
     capture_exposure_probe_failed = pyqtSignal(object)  # (session, reason, camera_lost)
+    bracket_probe_requested = pyqtSignal(BracketProbeRequest)
+    capture_bracket_probe_finished = pyqtSignal(object)  # (session, BracketReading)
+    capture_bracket_probe_failed = pyqtSignal(object)  # (session, reason, camera_lost)
     sensor_response_requested = pyqtSignal(SensorResponseRequest)
     capture_sensor_response_progress = pyqtSignal(float, str)
     capture_sensor_response_measured = pyqtSignal(object)  # 3x3 array: sensor channel rows, LED columns
@@ -1284,6 +1288,9 @@ class AppController(QObject):
         self.exposure_probe_requested.connect(self.capture_worker.run_exposure_probe)
         self.capture_worker.exposure_probe_finished.connect(self.capture_exposure_probe_finished.emit)
         self.capture_worker.exposure_probe_failed.connect(self.capture_exposure_probe_failed.emit)
+        self.bracket_probe_requested.connect(self.capture_worker.run_bracket_probe)
+        self.capture_worker.bracket_probe_finished.connect(self.capture_bracket_probe_finished.emit)
+        self.capture_worker.bracket_probe_failed.connect(self.capture_bracket_probe_failed.emit)
         self.sensor_response_requested.connect(self.capture_worker.measure_sensor_response)
         self.capture_worker.sensor_response_progress.connect(self.capture_sensor_response_progress.emit)
         self.capture_worker.sensor_response_measured.connect(self.capture_sensor_response_measured.emit)
@@ -7988,6 +7995,10 @@ class AppController(QObject):
     def start_exposure_probe(self, req: ExposureProbeRequest) -> None:
         self._ensure_capture_thread()
         self.exposure_probe_requested.emit(req)
+
+    def start_bracket_probe(self, req: BracketProbeRequest) -> None:
+        self._ensure_capture_thread()
+        self.bracket_probe_requested.emit(req)
 
     def start_sensor_response(self, req: SensorResponseRequest) -> None:
         self._ensure_capture_thread()

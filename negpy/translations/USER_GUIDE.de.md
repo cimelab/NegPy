@@ -613,6 +613,15 @@ Sichtbar, solange ein Scanlight verbunden ist. Eine Vorgabe enthält die Lichtwe
 *   **IR-Verschlusszeit** und **Infrarot** (Lichter mit Infrarot-LEDs): fügt jedem Scan eine Infrarotbelichtung für die Staubentfernung hinzu, gespeichert als `_IR`-Datei. Es braucht eine Kamera, die Infrarot sieht (Vollspektrum oder umgebaut), und manuellen Fokus. Nur für Farbfilm.
 *   **Kanalverzögerung**: eine Pause zwischen den Belichtungen für Rot, Grün und Blau, für Kameras, die sie brauchen.
 
+<!-- panel:scan_hdr src:0e174fe7 -->
+### HDR-Belichtungsreihe
+
+Nimmt jedes Bild als Reihe immer längerer Belichtungen auf und führt sie zu einem DNG zusammen. Verwende sie für dichten Film, den eine Belichtung nicht fasst, etwa die Schatten eines Dias. Sie funktioniert mit Weißlicht, deinem eigenen Licht und einer Einzelbelichtungs-Vorgabe. Trichrome und Mischen haben keine Reihe.
+
+*   **HDR-Belichtungsreihe**: schaltet die Reihe für jeden Scan und jedes Neu aufnehmen ein. Das DNG öffnet sich als RAW des Bildes. Die Aufnahmen wandern in einen Unterordner `HDR Brackets`.
+*   **Kalibrieren** (oder **Reihe** in Live View): Klicke auf die hellste Stelle, etwa die klare Filmbasis, dann auf die dichteste. NegPy nimmt ein Bild mit der Scan-Belichtung auf, misst den Umfang des Films und stellt Aufnahmen und Schritt ein. Miss zuerst, damit die hellste Stelle knapp unter dem Clipping liegt.
+*   **Aufnahmen** und **Schritt**: wie viele Belichtungen jedes Bild aufnimmt und um wie viele Blendenstufen jede länger ist. Die erste Aufnahme ist die normale Belichtung. NegPy verlängert jeden Schritt zuerst mit dem Verschluss und stellt dann die Lichtstärke für die genaue Zeit ein.
+
 <!-- panel:scan_output src:3015443a -->
 ### Ausgabe
 

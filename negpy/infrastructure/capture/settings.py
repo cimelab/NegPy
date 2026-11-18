@@ -58,6 +58,9 @@ class ScanlightSettings:
     strip_flat: bool = False  # after a whole strip ejects, shoot the empty dock for the roll's Flat Field profile
     capture_delay_s: float = 0.0  # seconds Scan and Retake hold the first exposure
     adopted_presets: tuple[str, ...] = ()  # built-in presets added to the dropdown; the rest stay under +
+    hdr_enabled: bool = False  # merge each white-light or Single Exposure frame from an HDR bracket
+    hdr_count: int = 3  # shots in the bracket, the base exposure included
+    hdr_ev_step: float = 2.0  # stops between two shots
 
     def __post_init__(self) -> None:
         # A dict saved before the process-mode rename still carries the old names.
