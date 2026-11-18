@@ -59,6 +59,7 @@ GUIDED_KEYS = (
     "scan_framing",
     "scan_camera",
     "scan_light",
+    "scan_hdr",
     "scan_output",
     "scan_strip",
 )

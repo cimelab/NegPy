@@ -38,6 +38,7 @@ from negpy.services.capture.calibration import (
     normalize_start_point,
     scan_ladder,
     true_seconds,
+    usable_ladder,
 )
 from negpy.services.capture.service import CaptureError, CaptureService, capture_single
 
@@ -106,6 +107,19 @@ class CaptureRequest:
     whole_strip: bool = False  # scan and advance frame after frame until the strip ends or Stop
     strip_flat: bool = False  # with whole_strip: after the eject, shoot the empty dock for the roll's Flat Field profile
     shutter_ladder: tuple[str, ...] = ()  # the body's shutter labels, for the flat's own exposure
+    hdr_count: int = 1  # shots in an HDR bracket merged into one DNG; 1 = none. White light and Single Exposure only
+    hdr_ev_step: float = 0.0  # stops between the bracket's shots
+
+
+@dataclass(frozen=True)
+class BracketProbeRequest:
+    """One RAW at the body's current exposure under the light as lit, metered at the frame's
+    brightest and densest areas for an HDR bracket."""
+
+    shutter: str
+    bright_roi: Roi
+    dense_roi: Roi
+    session: int = 0  # the live-view session that asked, echoed back so a stopped one's report is dropped
 
 
 @dataclass(frozen=True)
@@ -193,6 +207,26 @@ def _shutters_or_none(shutters: tuple[str, str, str]):
     return tuple(s.strip() or None for s in shutters)
 
 
+def shoots_bracket(req: "CaptureRequest") -> bool:
+    """Whether the scan shoots an HDR bracket: a single-file frame under white light, the
+    operator's own light or all three LEDs at once. Trichrome and Blend take none."""
+    single_file = not req.rgb_mode or req.white_mode or (req.single_capture and not req.blend_capture)
+    return req.hdr_count > 1 and single_file
+
+
+class _NoLight:
+    """The operator's own light, which a capture leaves as it is."""
+
+    def set_color(self, r: int = 0, g: int = 0, b: int = 0, w: int = 0, ir: int = 0, save: bool = False) -> None:
+        pass
+
+    def off(self) -> None:
+        pass
+
+    def close(self) -> None:
+        pass
+
+
 @dataclass
 class _EarlyAdvance:
     """A film move started while the camera processes a Blend frame, and its `_advance_film` result."""
@@ -233,6 +267,8 @@ class CaptureWorker(QObject):
     exposure_probe_finished = pyqtSignal(object)  # (session, MeterReading)
     # (session, reason, camera_lost): camera_lost when the capture failed and the session was closed
     exposure_probe_failed = pyqtSignal(object)
+    bracket_probe_finished = pyqtSignal(object)  # (session, BracketReading)
+    bracket_probe_failed = pyqtSignal(object)  # (session, reason, camera_lost)
     sensor_response_progress = pyqtSignal(float, str)
     sensor_response_measured = pyqtSignal(object)  # 3x3 array: sensor channel rows, LED columns
     sensor_response_failed = pyqtSignal(str)
@@ -381,6 +417,9 @@ class CaptureWorker(QObject):
             camera = self._acquire_camera()
             logger.info("run_capture setup %.0f ms", (time.perf_counter() - _t0) * 1000)
 
+            if shoots_bracket(req):
+                return self._run_bracket(req, camera)
+
             if not req.rgb_mode:
                 # Normal white-light scanning, with no Scanlight: one plain camera shot imported
                 # as an ordinary single RAW, with no LED control and no triplet. The operator's
@@ -405,45 +444,8 @@ class CaptureWorker(QObject):
             # Only the frame's last exposure leaves the light lit; an earlier one hands straight to the next.
             visible_end = None if req.infrared else req.end_light
 
-            def _capture_ir() -> str:
-                """The infrared exposure at its own shutter, with the body's shutter put back after,
-                so a frame shot at the body's shutter never inherits the infrared one."""
-                shutter = req.shutter_ir.strip() or None
-                readable = shutter is not None and hasattr(camera, "read_settings") and hasattr(camera, "set_shutter")
-                before = camera.read_settings().get("shutter", {}).get("cur", -1) if readable else -1
-                try:
-                    return service.capture_channel(
-                        roll_name=req.roll_name,
-                        frame_number=req.frame_number,
-                        output_folder=req.output_folder,
-                        channel=Channel.IR,
-                        level=255,
-                        shutter=shutter,
-                        iso=req.iso or None,
-                        aperture=req.aperture or None,
-                        settle_s=req.settle_s,
-                        cancel=self._cancel,
-                        end_light=req.end_light,
-                    )
-                finally:
-                    if isinstance(before, int) and before >= 0:
-                        camera.set_shutter(before)
-
             def _with_ir(paths: list) -> list:
-                """Append the frame's infrared exposure when the preset asks for one. The visible
-                exposures are on disk by now, so a failed infrared one ends the frame without it
-                instead of failing the frame, which would delete them as a partial capture."""
-                if not req.infrared:
-                    return paths
-                self.channel.emit("IR")
-                self.status.emit(tr("Capturing IR channel…"))
-                try:
-                    paths.append(_capture_ir())
-                except Exception as exc:  # noqa: BLE001
-                    logger.exception("infrared exposure failed")
-                    self.status.emit(tr("Infrared exposure failed, frame kept without it: {error}", error=exc))
-                self.progress.emit(1.0)
-                return paths
+                return self._with_ir(req, camera, service, paths)
 
             self._wait_before_capture(req.capture_delay_s)  # after the light check, so a dead light fails at once
             if req.white_mode:  # one broadband white exposure (slide / B&W), no RGB triplet
@@ -550,6 +552,146 @@ class CaptureWorker(QObject):
             logger.exception("capture failed")
             self.error.emit(str(e))
             return False
+
+    def _capture_ir(self, req: CaptureRequest, camera, service: CaptureService) -> str:
+        """The infrared exposure at its own shutter, with the body's shutter put back after,
+        so a frame shot at the body's shutter never inherits the infrared one."""
+        shutter = req.shutter_ir.strip() or None
+        readable = shutter is not None and hasattr(camera, "read_settings") and hasattr(camera, "set_shutter")
+        before = camera.read_settings().get("shutter", {}).get("cur", -1) if readable else -1
+        try:
+            return service.capture_channel(
+                roll_name=req.roll_name,
+                frame_number=req.frame_number,
+                output_folder=req.output_folder,
+                channel=Channel.IR,
+                level=255,
+                shutter=shutter,
+                iso=req.iso or None,
+                aperture=req.aperture or None,
+                settle_s=req.settle_s,
+                cancel=self._cancel,
+                end_light=req.end_light,
+            )
+        finally:
+            if isinstance(before, int) and before >= 0:
+                camera.set_shutter(before)
+
+    def _with_ir(self, req: CaptureRequest, camera, service: CaptureService, paths: list) -> list:
+        """Append the frame's infrared exposure when the preset asks for one. The visible
+        exposures are on disk by now, so a failed infrared one ends the frame without it
+        instead of failing the frame, which would delete them as a partial capture."""
+        if not req.infrared:
+            return paths
+        self.channel.emit("IR")
+        self.status.emit(tr("Capturing IR channel…"))
+        try:
+            paths.append(self._capture_ir(req, camera, service))
+        except Exception as exc:  # noqa: BLE001
+            logger.exception("infrared exposure failed")
+            self.status.emit(tr("Infrared exposure failed, frame kept without it: {error}", error=exc))
+        self.progress.emit(1.0)
+        return paths
+
+    def _run_bracket(self, req: CaptureRequest, camera) -> bool:
+        """Shoot the frame as an HDR bracket from its own exposure and merge it into one DNG, which
+        enters NegPy as the frame's RAW. The shots move into the roll's bracket folder. Exceptions
+        reach `run_capture`, which reports them."""
+        from negpy.services.capture.bracket import plan_bracket
+        from negpy.services.capture.calibration import true_seconds
+        from negpy.services.capture.hdr_capture import merge_to_dng, solve_bracket, stash_bracket
+
+        ladder = tuple(req.shutter_ladder)
+        if not ladder and hasattr(camera, "read_settings"):
+            info = camera.read_settings().get("shutter", {})
+            ladder = tuple(str(o.get("label", "")) for o in info.get("options", [])) if isinstance(info, dict) else ()
+        if not req.rgb_mode:
+            light, base, levels, color = None, req.shutters[0], (), None
+        elif req.white_mode:
+            light, base, levels, color = self._ensure_light(req.port), req.shutter_w, (req.w_level,), lambda lv: {"w": lv[0]}
+        else:
+            light, base = self._ensure_light(req.port), req.shutters[0]
+            levels, color = tuple(req.levels), lambda lv: {"r": lv[0], "g": lv[1], "b": lv[2]}
+        base = base.strip() or _current_shutter(camera)
+        if not base:
+            raise CaptureError(tr("HDR needs a shutter time. Set the camera's shutter to a time, not Bulb, then scan again."))
+        try:
+            shots = plan_bracket(base, levels, req.hdr_count, req.hdr_ev_step, ladder)
+        except ValueError as exc:
+            raise CaptureError(tr("HDR cannot plan the bracket: {error}", error=exc)) from exc
+        service = CaptureService(light if light is not None else _NoLight(), camera)
+        total = len(shots) + 1
+
+        def on_shot(k: int) -> None:
+            self.status.emit(tr("Capturing HDR shot {shot} of {count}…", shot=k + 1, count=len(shots)))
+            self.progress.emit(k / total)
+
+        self._wait_before_capture(req.capture_delay_s)
+        files = service.capture_bracket(
+            f"{req.roll_name}_Frame{req.frame_number:03d}",
+            req.output_folder,
+            shots,
+            color,
+            iso=(req.iso or None) if req.rgb_mode and not req.white_mode else None,
+            aperture=(req.aperture or None) if req.rgb_mode and not req.white_mode else None,
+            settle_s=req.settle_s,
+            cancel=self._cancel,
+            on_shot=on_shot,
+            end_light=None if req.infrared else req.end_light,
+        )
+        self.status.emit(tr("Merging the HDR bracket…"))
+        self.progress.emit(len(shots) / total)
+        try:
+            ordered, ratios = solve_bracket(files)
+            reference = shots[files.index(ordered[0])]
+            iso = _setting_label(camera.read_settings().get("iso")) if hasattr(camera, "read_settings") else ""
+            dng = merge_to_dng(
+                ordered,
+                ratios,
+                os.path.join(req.output_folder, f"{req.roll_name}_Frame{req.frame_number:03d}.dng"),
+                exposure_s=true_seconds(reference.shutter, usable_ladder(ladder) or (reference.shutter,)),
+                iso=int(iso) if iso.isdigit() else 0,
+            )
+        finally:
+            stash_bracket(files, req.output_folder)  # loose shots in the roll folder would open as frames
+        short = max(shot.short_stops for shot in shots)
+        if short > 0.05:
+            self.status.emit(
+                tr("The longest HDR shot is {stops:.1f} stops short: the slowest shutter and full light cannot reach it.", stops=short)
+            )
+        paths = [dng]
+        if req.infrared and light is not None:
+            paths = self._with_ir(req, camera, service, paths)
+        self._finish_frame(req, paths)
+        return True
+
+    @pyqtSlot(BracketProbeRequest)
+    def run_bracket_probe(self, req: BracketProbeRequest) -> None:
+        """One RAW under the light as lit, at the body's current exposure, metered at the two areas
+        the operator clicked; the reading is the bracket the film needs."""
+        import tempfile
+
+        from negpy.infrastructure.capture.raw_demosaic import linear_demosaic
+        from negpy.services.capture.bracket import read_bracket
+
+        with tempfile.TemporaryDirectory(prefix="negpy-bracket-", ignore_cleanup_errors=True) as scratch_dir:
+            try:
+                camera = self._acquire_camera()
+                written = camera.capture(os.path.join(scratch_dir, "probe.raw"), shutter=req.shutter)
+            except Exception as e:
+                logger.exception("bracket probe failed")
+                try:
+                    self._close_camera()
+                finally:
+                    self.bracket_probe_failed.emit((req.session, str(e), True))
+                return
+            try:
+                reading = read_bracket(linear_demosaic(written, half_size=True), req.bright_roi, req.dense_roi)
+            except Exception as e:  # the camera session stands; only the decode or the maths failed
+                logger.exception("bracket reading failed")
+                self.bracket_probe_failed.emit((req.session, str(e), False))
+                return
+        self.bracket_probe_finished.emit((req.session, reading))
 
     def _finish_frame(self, req: CaptureRequest, paths: list) -> None:
         """Report the frame, then move the film when asked. The import starts at once; the next
@@ -767,7 +909,7 @@ class CaptureWorker(QObject):
         Skipped for white-light captures (a single frame is already complete, not a triplet)
         and for retakes (the frame existed complete; overwriting leaves three files in place).
         """
-        if req.white_mode or req.single_capture or req.blend_capture or req.is_retake or not req.rgb_mode:
+        if req.white_mode or req.single_capture or req.blend_capture or req.is_retake or not req.rgb_mode or shoots_bracket(req):
             return  # single-file captures (white / single RGB / normal) aren't triplets → nothing to keep aligned
         prefix = f"{req.roll_name}_Frame{req.frame_number:03d}_"  # trailing _ → only channel files
         try:

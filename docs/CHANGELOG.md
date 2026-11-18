@@ -1,5 +1,21 @@
 # Change Log
 
+## 0.69.0
+
+- New: **Command-line launch** — open files and folders, set export options with flags, or render positives with no window. @jboneng
+- New: **Analysis Overlay** — shows the Analysis chart in a canvas corner while the card is closed.
+- New: **Analog Gain** — per-channel sliders for Nikon scanners. @gtschieder
+- New: **Locate Folder…** — relinks a folder roll after its folder is renamed or moved. @thetalkingdrum
+- Change: **Saturation** — works in Oklab, so blues stay blue.
+- Change: **Slide white balance** — Temperature moves Cyan and Yellow, Pick WB sets Temperature and Tint, and a hint shows clipped highlights. @thetalkingdrum
+- Change: **Softest Grade hint** — shows when a flat negative cannot print softer.
+- Change: **Faster editing** — a held slider key moves faster, and rotate, flip and Linear Output run faster.
+- Change: **Apply to Frames** — lists settings at their default value.
+- Fix: **DNG and RAW color** — scanner DNGs, RAWs with no as-shot white balance, and JPEG XL DNGs on Transfer. @thetalkingdrum
+- Fix: **Rolls** — Roll scope after Save as Roll, and the Save to Folder Roll button in the Roll row. @thetalkingdrum
+- Fix: **Canvas** — crop handles stay visible at high zoom, and Export Size opens each new size at 100%. @matthoosier @seanharding
+- Fix: **Windows export** — retries when another app locks the file. @v3ravani
+
 ## 0.68.0
 
 - New: **Fade Restoration** — restores the dyes of faded slides on its own Roll-tab card, with an optional Remove Stain. @thetalkingdrum
@@ -7,13 +23,11 @@
 - New: **Pick Dmin and Dmax by hand** — for difficult frames that auto metering reads wrong; Film Base moves to the Analysis Readouts header.
 - New: **Roll Average stays current** — new frames follow it, a crop or Metering change measures again in the background, and one Undo covers a change to several frames.
 - New: **Frame No. sort** for the Film Strip and the contact sheet order. @red-prs
-- New: **Norwegian Bokmål and Vietnamese translations**. @jboneng @dinhkarate
+- New: **Norwegian and Vietnamese translations**. @jboneng @dinhkarate
 - New: **More edge prints** — Fujicolor 100, Superia Premium 400, Superpan 200, Fujifilm 400 and Lomography CN 400. @red-prs
 - New: **Memory limits sized to the machine** — Preferences recommends cache sizes from RAM. @jondestoppeleire
-- New: **Multisampling on the Nikon LS-50** — nkscan 0.18 adds it.
-- Change: **Film Strip** — the frame tooltip names each mark.
+- New: **Multisampling on the Nikon LS-50** — thanks to nkscan 0.18.0 @activexray.
 - Change: **Plustek** — resolutions from a fixed list, pyopticfilm 1.3.9. @jboneng
-- Fix: **Roll cards** — a card edited or undone back to the roll's value unlocks, and the scanning setup moves the roll's Raw Decode.
 - Fix: **Slides and Positive files** — camera RAW slide color, Draw Region, slides out of the Roll Average, Positive JPEG ICC profiles. @thetalkingdrum
 - Fix: **Auto Crop** — keeps the whole picture on high-key frames and on slides. @kurtwindisch @thetalkingdrum
 - Fix: **Film scanners** — camera Optics and Recovery stay off scanner frames, SANE film scanners are detected by device type, and Avision color depth is set. @kurtwindisch @packetscrub

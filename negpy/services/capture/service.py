@@ -16,7 +16,7 @@ import tempfile
 import threading
 import time
 from dataclasses import dataclass
-from typing import Callable, Optional, cast
+from typing import Callable, Optional, Sequence, cast
 
 from negpy.infrastructure.capture.base import (
     CAPTURE_ORDER,
@@ -31,6 +31,7 @@ from negpy.infrastructure.capture.base import (
 )
 from negpy.infrastructure.capture.protocol import MAX_SHUTTER_PULSE_S
 from negpy.kernel.system.logging import get_logger
+from negpy.services.capture.bracket import BracketShot, shot_stem
 from negpy.services.capture.calibration import PWM_MAX, PWM_MIN
 
 logger = get_logger(__name__)
@@ -514,6 +515,67 @@ class CaptureService:
             return path
         finally:
             self._release_light(ok, end_light)
+
+    def capture_bracket(
+        self,
+        frame_stem: str,
+        output_folder: str,
+        shots: Sequence[BracketShot],
+        color: Optional[Callable[[tuple[int, ...]], dict]] = None,
+        *,
+        iso: Optional[str] = None,
+        aperture: Optional[str] = None,
+        settle_s: float = 0.4,
+        min_raw_bytes: int = 8 * 1024 * 1024,
+        max_raw_bytes: int = 200 * 1024 * 1024,
+        cancel: Optional[threading.Event] = None,
+        on_shot: Optional[Callable[[int], None]] = None,
+        end_light: Optional[LightLevels] = None,
+    ) -> list[str]:
+        """Shoot one frame's HDR bracket, shortest shot first, as `<frame_stem>_H<n>` files.
+
+        `color` gives the `set_color` keywords for a shot's levels; None leaves the operator's light
+        alone. Every shot is staged beside the roll and moves in only when the whole bracket is done,
+        so a failed or cancelled bracket leaves no partial frame. ISO and aperture go with the first shot.
+        """
+        os.makedirs(output_folder, exist_ok=True)
+        staging_dir = tempfile.mkdtemp(prefix=f".{frame_stem}-", suffix=".capture", dir=output_folder)
+        staged: list[str] = []
+        ok = False
+        try:
+            for shot in shots:
+                if cancel is not None and cancel.is_set():
+                    raise CaptureError("capture cancelled")
+                if on_shot is not None:
+                    on_shot(shot.index)
+                if color is not None:
+                    self._light.set_color(**color(shot.levels))
+                    self._sleep(settle_s)
+                first = not staged
+                path = self._camera.capture(
+                    os.path.join(staging_dir, shot_stem(frame_stem, shot.index)) + _RAW_SUFFIX,
+                    shutter=shot.shutter,
+                    iso=iso if first else None,
+                    aperture=aperture if first else None,
+                )
+                verify_raw_size(path, min_raw_bytes, max_raw_bytes)
+                staged.append(path)
+                logger.info("bracket shot %s at %s, levels %s", os.path.basename(path), shot.shutter, shot.levels)
+            if cancel is not None and cancel.is_set():
+                raise CaptureError("capture cancelled")
+            final = []
+            for path in staged:
+                target = os.path.join(output_folder, os.path.basename(path))
+                os.replace(path, target)
+                final.append(target)
+            ok = True
+            return final
+        except OSError as exc:
+            raise CaptureError(f"could not save the bracket: {exc}") from exc
+        finally:
+            if color is not None:
+                self._release_light(ok, end_light)
+            shutil.rmtree(staging_dir, ignore_errors=True)
 
     def _release_light(self, ok: bool, end_light: Optional[LightLevels]) -> None:
         """Leave the light at `end_light` (r, g, b, w) after a capture that succeeded, with no off

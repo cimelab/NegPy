@@ -90,6 +90,7 @@ REGISTRY: dict[str, ShortcutEntry] = {
     "toggle_embedded_peek": ShortcutEntry("P", tr("Peek the camera's embedded preview; hold to peek only while down"), tr("Tools")),
     "toggle_zones": ShortcutEntry("Shift+Z", tr("Adams zone overlay"), tr("Tools")),
     "toggle_clipping_overlay": ShortcutEntry("", tr("Clipping Overlay: paper black and paper white on the frame"), tr("Tools")),
+    "toggle_analysis_overlay": ShortcutEntry("", tr("Analysis Overlay: the Analysis chart in a corner of the picture"), tr("Tools")),
     "toggle_zone_hover_highlight": ShortcutEntry(
         "", tr("Zone Highlight: show the zone strip's hovered zone alone on the frame"), tr("Tools")
     ),
@@ -192,6 +193,7 @@ REGISTRY: dict[str, ShortcutEntry] = {
     "lento_strip_flat": ShortcutEntry("", tr("Toggle Shoot Flat Field (Lento Dock)"), tr("Process")),
     "lento_eject": ShortcutEntry("", tr("Eject the film (Lento Dock)"), tr("Process")),
     "scanlight_infrared": ShortcutEntry("", tr("Toggle Infrared: an infrared exposure after every frame (Scanlight)"), tr("Process")),
+    "scan_hdr_bracket": ShortcutEntry("", tr("Toggle HDR Bracket: merge a bracket of exposures into one DNG"), tr("Process")),
     "mode_color_negative": ShortcutEntry("", tr("Mode: Color Negative"), tr("Process")),
     "mode_bw_negative": ShortcutEntry("", tr("Mode: B&W Negative"), tr("Process")),
     "mode_transparency": ShortcutEntry("", tr("Mode: Transparency"), tr("Process")),
@@ -324,6 +326,7 @@ REGISTRY: dict[str, ShortcutEntry] = {
     # A stored id: saved key bindings name it, so it keeps its name.
     "close_roll": ShortcutEntry("", tr("Unload every frame from the Film Strip"), tr("Actions")),
     "remove_from_roll": ShortcutEntry("", tr("Remove the selected frames from the roll…"), tr("Actions")),
+    "locate_roll_folder": ShortcutEntry("", tr("Locate the open roll's folder after it was renamed or moved…"), tr("Actions")),
     "restore_removed_frames": ShortcutEntry("", tr("Restore the frames removed from the roll…"), tr("Actions")),
     "reset_tab": ShortcutEntry("", tr("Reset this tab to defaults"), tr("Actions")),
     "reset_tab_to_roll": ShortcutEntry("", tr("Reset this tab to the roll's settings"), tr("Actions")),
@@ -355,6 +358,7 @@ REGISTRY: dict[str, ShortcutEntry] = {
     "live_view_scan_space": ShortcutEntry("Space", tr("Scan, or stop the capture (second key)"), tr("Camera Live View"), LIVE_VIEW),
     "live_view_retake": ShortcutEntry("R", tr("Retake the current frame"), tr("Camera Live View"), LIVE_VIEW),
     "live_view_meter": ShortcutEntry("M", tr("Meter: set the shutter from one RAW probe"), tr("Camera Live View"), LIVE_VIEW),
+    "live_view_bracket": ShortcutEntry("", tr("Calibrate the HDR bracket on two clicked areas"), tr("Camera Live View"), LIVE_VIEW),
     "live_view_histogram": ShortcutEntry("H", tr("Show the live histogram"), tr("Camera Live View"), LIVE_VIEW),
     "live_view_zebra": ShortcutEntry("Z", tr("Show clipping zebras"), tr("Camera Live View"), LIVE_VIEW),
     "live_view_capture_red": ShortcutEntry("", tr("Toggle the red exposure for Retake"), tr("Camera Live View"), LIVE_VIEW),
