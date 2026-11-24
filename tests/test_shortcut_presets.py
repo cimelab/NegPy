@@ -58,9 +58,9 @@ def test_matching_preset_names_the_set_in_use():
 
 
 def test_every_smartconvert_panel_action_is_a_registry_action():
-    from negpy.desktop.view.shortcut_presets import SAME_AS_COPY_KEY, SMARTCONVERT_PANEL, SMARTCONVERT_SHIFT_TAP
+    from negpy.desktop.view.shortcut_presets import SMARTCONVERT_PANEL, SMARTCONVERT_SHIFT_TAP
 
-    actions = [a for a in SMARTCONVERT_PANEL.values() if a != SAME_AS_COPY_KEY] + [SMARTCONVERT_SHIFT_TAP]
+    actions = [*SMARTCONVERT_PANEL.values(), SMARTCONVERT_SHIFT_TAP]
     assert [a for a in actions if a not in REGISTRY] == []
 
 
@@ -88,11 +88,11 @@ def test_the_panel_takes_the_keys_it_sends():
     assert live["rotate_ccw"] == REGISTRY["rotate_ccw"].default_key
 
 
-def test_the_panels_x_key_runs_what_ctrl_shift_c_runs_in_the_set_in_use():
+def test_the_panels_x_key_copies_with_bounds_in_every_set():
     from negpy.desktop.view.shortcut_presets import smartconvert_layer
 
-    assert smartconvert_layer(preset_bindings("negpy"))[1]["X"] == "copy_with_bounds"
-    assert smartconvert_layer(preset_bindings("lightroom"))[1]["X"] == "copy"
+    for name in PRESETS:
+        assert smartconvert_layer(preset_bindings(name))[1]["X"] == "copy_with_bounds"
 
 
 def test_return_stays_the_enter_key():

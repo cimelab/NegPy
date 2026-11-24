@@ -96,7 +96,6 @@ def matching_preset(bindings: dict[str, str]) -> str:
 # The SmartConvert Control Panel (Filmomat) sends fixed keyboard keys. Its layer sits on top of
 # whichever set is in use: each panel key runs a NegPy action, and any action of that set on the
 # same key goes unbound while the layer is on. Ctrl is ⌘ and Alt is ⌥ on macOS.
-SAME_AS_COPY_KEY = "@Ctrl+Shift+C"  # the action that holds Ctrl+Shift+C in the set in use
 SMARTCONVERT_PANEL: dict[str, str] = {
     "Q": "cyan_inc",
     "A": "cyan_dec",
@@ -116,12 +115,11 @@ SMARTCONVERT_PANEL: dict[str, str] = {
     "Ctrl+Left": "prev_file",
     "Ctrl+Right": "next_file",
     # The three custom keys: X and C, and Return, which stays the Enter key.
-    "X": SAME_AS_COPY_KEY,
+    "X": "copy_with_bounds",
     "C": "paste",
 }
 # The panel's Mirror key sends Shift alone, which no key sequence can hold.
 SMARTCONVERT_SHIFT_TAP = "pick_dust"
-COPY_KEY_FALLBACK = "copy_with_bounds"
 
 
 def smartconvert_layer(bindings: dict[str, str]) -> tuple[dict[str, str], dict[str, str]]:
@@ -133,9 +131,7 @@ def smartconvert_layer(bindings: dict[str, str]) -> tuple[dict[str, str], dict[s
     def norm(key: str) -> str:
         return QKeySequence(key).toString(QKeySequence.SequenceFormat.PortableText)
 
-    copy_key = norm("Ctrl+Shift+C")
-    copy_action = next((a for a, k in bindings.items() if k and norm(k) == copy_key), COPY_KEY_FALLBACK)
-    aliases = {key: copy_action if action == SAME_AS_COPY_KEY else action for key, action in SMARTCONVERT_PANEL.items()}
+    aliases = dict(SMARTCONVERT_PANEL)
     taken = {norm(key) for key in aliases}
     effective = {
         action: ("" if key and clash_scope(action, key) == "main" and norm(key) in taken else key) for action, key in bindings.items()

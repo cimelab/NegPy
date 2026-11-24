@@ -49,7 +49,7 @@ The Lightroom set leaves NegPy's letter keys for density, grade, magenta, yellow
 | Rotate CCW / CW | `Left` / `Right` | Rotate 90° CCW / CW |
 | Back / Next | `Ctrl + Left` / `Ctrl + Right` | Previous / next file |
 | Mirror | `Shift` alone | Toggle heal tool |
-| Custom 1 | `X` | The action on `Ctrl + Shift + C` (copy settings) |
+| Custom 1 | `X` | Copy settings (with bounds) |
 | Custom 2 | `C` | Paste settings |
 | Custom 3 | `Return` | The `Enter` key |
 
