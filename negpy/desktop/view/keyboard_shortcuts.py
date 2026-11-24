@@ -222,9 +222,9 @@ def _toggle_tool_button(window, tab_key: str | None, button) -> None:
         window.controller.set_status(tr("{value} not available", value=name), 1500, kind="warning")
 
 
-def _press_enter() -> None:
-    """Send Enter to the widget with focus, so the dialog or pop-up in front takes it."""
-    target = QApplication.focusWidget() or QApplication.activeWindow()
+def _press_enter(target: Optional[QWidget] = None) -> None:
+    """Send Enter to *target* or the widget with focus, so the dialog or pop-up in front takes it."""
+    target = target or QApplication.focusWidget() or QApplication.activeWindow()
     if target is None:
         return
     for kind in (QEvent.Type.KeyPress, QEvent.Type.KeyRelease):
@@ -491,6 +491,44 @@ class KeyRepeat(QObject):
         return False
 
 
+class EnterKey(QObject):
+    """Turns a key into Enter in every window of the app, a modal dialog included: a QShortcut
+    on the main window never fires while a modal dialog blocks it. A text field keeps the key."""
+
+    def __init__(self, parent: QObject):
+        super().__init__(parent)
+        self._keys: set[tuple[int, int]] = set()
+        self._installed = False
+
+    def set_keys(self, keys: list[str]) -> None:
+        combos = [QKeySequence(k)[0] for k in keys if k]
+        self._keys = {(c.key().value, c.keyboardModifiers().value) for c in combos}
+        app = QApplication.instance()
+        if self._keys and not self._installed:
+            app.installEventFilter(self)
+        elif not self._keys and self._installed:
+            app.removeEventFilter(self)
+        self._installed = bool(self._keys)
+
+    def eventFilter(self, watched, event) -> bool:
+        if event.type() != QEvent.Type.KeyPress or not isinstance(watched, QWidget):
+            return False
+        mods = event.modifiers() & ~Qt.KeyboardModifier.KeypadModifier
+        if (event.key(), mods.value) not in self._keys:
+            return False
+        from PyQt6.QtWidgets import QAbstractSpinBox, QLineEdit, QPlainTextEdit, QTextEdit
+
+        focus = QApplication.focusWidget()
+        if isinstance(focus, (QLineEdit, QTextEdit, QPlainTextEdit, QAbstractSpinBox)):
+            return False
+        # Act once, where the key lands first, not again as it climbs to the parents.
+        if watched is not (focus if focus is not None else watched.window()):
+            return False
+        if not event.isAutoRepeat():
+            _press_enter(watched)
+        return True
+
+
 class ShortcutManager:
     def __init__(self, window):
         self.window = window
@@ -502,6 +540,7 @@ class ShortcutManager:
         self._actions = self._build_actions()
         self.key_hold = KeyHold(window)
         self._held_actions = self._build_held_actions()
+        self.enter_key = EnterKey(window)
         self.apply_bindings(self.bindings)
 
     def _build_held_actions(self) -> dict[str, Callable[[int], None]]:
@@ -716,7 +755,7 @@ class ShortcutManager:
             "show_loupe": lambda: self.window.set_light_table(False),
             "show_develop": lambda: _show_develop(self.window),
             "toggle_zoom": lambda: _toggle_fit_zoom(self.window.canvas),
-            "press_enter": _press_enter,
+            "press_enter": lambda: _press_enter(),
             "export_selected": lambda: right.export_sidebar.run_export("selected"),
             "export_roll": lambda: right.export_sidebar.run_export("all"),
             "export_preferences": lambda: self.window.ui_mode.open_export_preferences(),
@@ -834,7 +873,9 @@ class ShortcutManager:
             if key:
                 self._add_shortcut(action_id, key, callback, held=self._held_actions.get(action_id))
         for key, action_id in panel_keys.items():
-            self._add_shortcut(action_id, key, self._actions[action_id])
+            if action_id != "press_enter":
+                self._add_shortcut(action_id, key, self._actions[action_id])
+        self.enter_key.set_keys([key for key, action_id in panel_keys.items() if action_id == "press_enter"])
 
         self.window.controls_panel.apply_shortcut_tooltips()
         self.window.right_panel.apply_shortcut_tooltips()
@@ -851,7 +892,7 @@ class ShortcutManager:
     def _add_shortcut(self, action_id: str, key: str, callback: Callable[[], None], held=None) -> None:
         shortcut = QShortcut(QKeySequence(key), self.window)
         if action_id == "press_enter":
-            # Its job is a dialog or pop-up in front, which is a window of its own.
+            # Its job is a pop-up in front, which is a window of its own.
             shortcut.setContext(Qt.ShortcutContext.ApplicationShortcut)
         if held is not None:
             # Autorepeat would re-run the press while the key is down.

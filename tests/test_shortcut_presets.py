@@ -109,3 +109,29 @@ def test_negpy_keys_the_panel_does_not_send_stay():
     assert live["density_up"] == "" and live["toggle_keep"] == ""
     assert live["prev_file"] == "Left" and live["next_file"] == "Right"
     assert live["copy"] == "Ctrl+C" and live["paste"] == "Ctrl+V"
+
+
+def test_the_panel_enter_key_presses_the_default_button_of_a_dialog(qapp):
+    """Custom 3 sends V. A modal dialog blocks main-window shortcuts, so an app event filter
+    turns V into Enter wherever it lands."""
+    from PyQt6.QtCore import QEvent, QObject, Qt
+    from PyQt6.QtGui import QKeyEvent
+    from PyQt6.QtWidgets import QApplication, QDialog, QPushButton
+
+    from negpy.desktop.view.keyboard_shortcuts import EnterKey
+
+    dialog = QDialog()
+    apply_btn = QPushButton("Apply", dialog)
+    apply_btn.setDefault(True)
+    clicked = []
+    apply_btn.clicked.connect(lambda: clicked.append(True))
+    enter_key = EnterKey(QObject())
+    enter_key.set_keys(["V"])
+    try:
+        dialog.show()
+        target = QApplication.focusWidget() or dialog
+        QApplication.sendEvent(target, QKeyEvent(QEvent.Type.KeyPress, Qt.Key.Key_V, Qt.KeyboardModifier.NoModifier, "v"))
+        assert clicked == [True]
+    finally:
+        enter_key.set_keys([])
+        dialog.close()
