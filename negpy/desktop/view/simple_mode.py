@@ -282,10 +282,20 @@ class UiMode(QObject):
             group.addAction(act)
             actions[name] = act
 
+        menu.addSeparator()
+        # A layer over either set: the panel's keys take over only the keys the panel sends.
+        panel_act = self._action(
+            menu,
+            tr("SmartConvert Control Panel"),
+            lambda: manager.set_smartconvert_panel(not manager.smartconvert_panel),
+        )
+        panel_act.setCheckable(True)
+
         def sync() -> None:
             current = matching_preset(manager.bindings)
             for name, act in actions.items():
                 act.setChecked(name == current)
+            panel_act.setChecked(manager.smartconvert_panel)
 
         menu.aboutToShow.connect(sync)
         menu.addSeparator()

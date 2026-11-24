@@ -36,6 +36,25 @@ Actions with no default key are not listed; every one of them can still be bound
 
 The Lightroom set leaves NegPy's letter keys for density, grade, magenta, yellow and temperature unbound, along with the peeks on `M` and `P`, the crop offset on `Z` and `X`, and analysis region draw on `Ctrl + R`. Bind any of them again in **Customize**.
 
+**Mode → Keyboard Shortcuts → SmartConvert Control Panel** adds the keys of a Filmomat SmartConvert Control Panel over the set in use. A key of the set that the panel also sends is unbound while this is on, and comes back when you turn it off:
+
+| Panel key | Sends | Action |
+|-----------|-------|--------|
+| Cyan / Red | `Q` / `A` | Cyan up / down |
+| Magenta / Green | `W` / `S` | Magenta up / down |
+| Yellow / Blue | `E` / `D` | Yellow up / down |
+| Density | `Up` / `Down` | Density up / down |
+| Contrast | `Alt + Up` / `Alt + Down` | Grade up / down |
+| Saturation | `Ctrl + Up` / `Ctrl + Down` | Temperature warmer / cooler |
+| Rotate CCW / CW | `Left` / `Right` | Rotate 90° CCW / CW |
+| Back / Next | `Ctrl + Left` / `Ctrl + Right` | Previous / next file |
+| Mirror | `Shift` alone | Toggle heal tool |
+| Custom 1 | `X` | The action on `Ctrl + Shift + C` (copy settings) |
+| Custom 2 | `C` | Paste settings |
+| Custom 3 | `Return` | The `Enter` key |
+
+The keyboard sends the same keys, so it does the same while the panel keys are on. A tap of `Shift` alone toggles the heal tool; `Shift` with a key or a click works as before.
+
 <!-- shortcuts:start -->
 ## Navigation
 | Key | Action |

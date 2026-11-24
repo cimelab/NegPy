@@ -91,3 +91,53 @@ def matching_preset(bindings: dict[str, str]) -> str:
         if preset_bindings(name) == bindings:
             return name
     return ""
+
+
+# The SmartConvert Control Panel (Filmomat) sends fixed keyboard keys. Its layer sits on top of
+# whichever set is in use: each panel key runs a NegPy action, and any action of that set on the
+# same key goes unbound while the layer is on. Ctrl is ⌘ and Alt is ⌥ on macOS.
+SAME_AS_COPY_KEY = "@Ctrl+Shift+C"  # the action that holds Ctrl+Shift+C in the set in use
+SMARTCONVERT_PANEL: dict[str, str] = {
+    "Q": "cyan_inc",
+    "A": "cyan_dec",
+    "W": "magenta_up",
+    "S": "magenta_down",
+    "E": "yellow_up",
+    "D": "yellow_down",
+    "Up": "density_up",
+    "Down": "density_down",
+    "Alt+Up": "grade_up",
+    "Alt+Down": "grade_down",
+    # The panel's Saturation keys.
+    "Ctrl+Up": "temp_warm",
+    "Ctrl+Down": "temp_cool",
+    "Left": "rotate_ccw",
+    "Right": "rotate_cw",
+    "Ctrl+Left": "prev_file",
+    "Ctrl+Right": "next_file",
+    # The three custom keys: X and C, and Return, which stays the Enter key.
+    "X": SAME_AS_COPY_KEY,
+    "C": "paste",
+}
+# The panel's Mirror key sends Shift alone, which no key sequence can hold.
+SMARTCONVERT_SHIFT_TAP = "pick_dust"
+COPY_KEY_FALLBACK = "copy_with_bounds"
+
+
+def smartconvert_layer(bindings: dict[str, str]) -> tuple[dict[str, str], dict[str, str]]:
+    """The bindings with the panel's keys taken over, and the panel's key -> action map."""
+    from PyQt6.QtGui import QKeySequence
+
+    from negpy.desktop.view.shortcut_registry import clash_scope
+
+    def norm(key: str) -> str:
+        return QKeySequence(key).toString(QKeySequence.SequenceFormat.PortableText)
+
+    copy_key = norm("Ctrl+Shift+C")
+    copy_action = next((a for a, k in bindings.items() if k and norm(k) == copy_key), COPY_KEY_FALLBACK)
+    aliases = {key: copy_action if action == SAME_AS_COPY_KEY else action for key, action in SMARTCONVERT_PANEL.items()}
+    taken = {norm(key) for key in aliases}
+    effective = {
+        action: ("" if key and clash_scope(action, key) == "main" and norm(key) in taken else key) for action, key in bindings.items()
+    }
+    return effective, aliases

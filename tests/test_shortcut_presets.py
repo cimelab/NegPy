@@ -55,3 +55,47 @@ def test_matching_preset_names_the_set_in_use():
     assert matching_preset(default_bindings()) == "negpy"
     assert matching_preset(preset_bindings("lightroom")) == "lightroom"
     assert matching_preset(merge_bindings({"copy": "Ctrl+Alt+Shift+K"})) == ""
+
+
+def test_every_smartconvert_panel_action_is_a_registry_action():
+    from negpy.desktop.view.shortcut_presets import SAME_AS_COPY_KEY, SMARTCONVERT_PANEL, SMARTCONVERT_SHIFT_TAP
+
+    actions = [a for a in SMARTCONVERT_PANEL.values() if a != SAME_AS_COPY_KEY] + [SMARTCONVERT_SHIFT_TAP]
+    assert [a for a in actions if a not in REGISTRY] == []
+
+
+def test_the_panel_layer_frees_its_keys_in_every_set(qapp):
+    """Two live shortcuts on one key both go dead, so the set gives up every key the panel sends."""
+    from negpy.desktop.view.shortcut_presets import smartconvert_layer
+
+    for name in PRESETS:
+        live, panel = smartconvert_layer(preset_bindings(name))
+        panel_keys = {QKeySequence(k).toString() for k in panel}
+        clashes = [a for a, k in live.items() if k and clash_scope(a, k) == "main" and QKeySequence(k).toString() in panel_keys]
+        assert clashes == [], name
+
+
+def test_the_panel_takes_the_keys_it_sends():
+    from negpy.desktop.view.shortcut_presets import smartconvert_layer
+
+    live, panel = smartconvert_layer(default_bindings())
+    assert panel["Q"] == "cyan_inc" and panel["A"] == "cyan_dec"
+    assert panel["Up"] == "density_up" and panel["Alt+Up"] == "grade_up" and panel["Ctrl+Up"] == "temp_warm"
+    assert panel["Left"] == "rotate_ccw" and panel["Ctrl+Right"] == "next_file"
+    assert panel["C"] == "paste"
+    # NegPy's density key Q and file key Left give way to the panel; rotate keeps its own [ too.
+    assert live["density_up"] == "" and live["prev_file"] == ""
+    assert live["rotate_ccw"] == REGISTRY["rotate_ccw"].default_key
+
+
+def test_the_panels_x_key_runs_what_ctrl_shift_c_runs_in_the_set_in_use():
+    from negpy.desktop.view.shortcut_presets import smartconvert_layer
+
+    assert smartconvert_layer(preset_bindings("negpy"))[1]["X"] == "copy_with_bounds"
+    assert smartconvert_layer(preset_bindings("lightroom"))[1]["X"] == "copy"
+
+
+def test_return_stays_the_enter_key():
+    from negpy.desktop.view.shortcut_presets import SMARTCONVERT_PANEL
+
+    assert not any(QKeySequence(k).toString() in ("Return", "Enter") for k in SMARTCONVERT_PANEL)

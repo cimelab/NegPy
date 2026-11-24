@@ -295,6 +295,7 @@ REGISTRY: dict[str, ShortcutEntry] = {
     "toggle_reference": ShortcutEntry("Shift+R", tr("Reference view: pin this frame beside the canvas to match others to it"), tr("View")),
     "edit_toolbar": ShortcutEntry("", tr("Edit the toolbar (which controls it shows, in what order)"), tr("View")),
     "toggle_simple_mode": ShortcutEntry("", tr("Switch between Simple and Advanced mode"), tr("View")),
+    "toggle_smartconvert_panel": ShortcutEntry("", tr("Use the keys of a SmartConvert Control Panel, or stop using them"), tr("View")),
     "show_loupe": ShortcutEntry("", tr("Loupe: leave the Light Table for the single frame"), tr("View")),
     "show_develop": ShortcutEntry("", tr("Develop: the single frame with its edit controls"), tr("View")),
     "toggle_zoom": ShortcutEntry("", tr("Toggle between fit to window and 100%"), tr("View")),

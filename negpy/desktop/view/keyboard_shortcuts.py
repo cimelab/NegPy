@@ -28,6 +28,7 @@ from negpy.desktop.view.shortcut_registry import (
     set_current_bindings,
     slider_step_for,
 )
+from negpy.desktop.view.shortcut_presets import SMARTCONVERT_SHIFT_TAP, smartconvert_layer
 from negpy.desktop.view.slider_shortcut_groups import SLIDER_GROUP_BY_ACTION, SLIDER_GROUPS, SliderShortcutGroup, sign_for_action
 from negpy.desktop.view.frame_merge_action import SCOPE_FRAME, SCOPE_ROLL, SCOPE_SELECTION, merge_to_tiff
 from negpy.desktop.view.sidecar_action import load_edit_from_sidecar
@@ -481,9 +482,60 @@ class KeyRepeat(QObject):
         return False
 
 
+class ShiftTap(QObject):
+    """Runs a callback when Shift is pressed and released alone in the main window. A key or a
+    click while Shift is down (Shift+click, a capital letter) cancels it."""
+
+    TAP_SECONDS = 0.5
+
+    def __init__(self, window, callback: Callable[[], None]):
+        super().__init__(window)
+        self.window = window
+        self._callback = callback
+        self._down_at: Optional[float] = None
+        self._installed = False
+
+    def set_enabled(self, enabled: bool) -> None:
+        app = QApplication.instance()
+        if enabled and not self._installed:
+            app.installEventFilter(self)
+        elif not enabled and self._installed:
+            app.removeEventFilter(self)
+        self._installed = enabled
+        self._down_at = None
+
+    def _in_text_field(self) -> bool:
+        from PyQt6.QtWidgets import QAbstractSpinBox, QLineEdit, QPlainTextEdit, QTextEdit
+
+        return isinstance(QApplication.focusWidget(), (QLineEdit, QTextEdit, QPlainTextEdit, QAbstractSpinBox))
+
+    def eventFilter(self, watched, event) -> bool:
+        import time
+
+        kind = event.type()
+        if kind == QEvent.Type.KeyPress:
+            shift_alone = event.key() == Qt.Key.Key_Shift and event.modifiers() == Qt.KeyboardModifier.ShiftModifier
+            if event.isAutoRepeat():
+                return False
+            self._down_at = time.monotonic() if shift_alone else None
+        elif kind in (QEvent.Type.MouseButtonPress, QEvent.Type.Wheel):
+            self._down_at = None
+        elif kind == QEvent.Type.KeyRelease and event.key() == Qt.Key.Key_Shift and not event.isAutoRepeat():
+            down_at, self._down_at = self._down_at, None
+            if (
+                down_at is not None
+                and time.monotonic() - down_at < self.TAP_SECONDS
+                and QApplication.activeWindow() is self.window
+                and not self._in_text_field()
+            ):
+                QTimer.singleShot(0, self._callback)
+        return False
+
+
 class ShortcutManager:
     def __init__(self, window):
         self.window = window
+        self.smartconvert_panel = bool(window.controller.session.repo.get_global_setting("smartconvert_panel", False))
         self.bindings = load_bindings(window.controller.session.repo)
         self.slider_steps = load_slider_steps(window.controller.session.repo)
         self._shortcuts: list[QShortcut] = []
@@ -491,6 +543,7 @@ class ShortcutManager:
         self._actions = self._build_actions()
         self.key_hold = KeyHold(window)
         self._held_actions = self._build_held_actions()
+        self.shift_tap = ShiftTap(window, lambda: self._actions[SMARTCONVERT_SHIFT_TAP]())
         self.apply_bindings(self.bindings)
 
     def _build_held_actions(self) -> dict[str, Callable[[int], None]]:
@@ -699,6 +752,7 @@ class ShortcutManager:
             "edit_toolbar": toolbar.open_toolbar_editor,
             # The mode and its pop-ups are built after this manager, so these look them up when run.
             "toggle_simple_mode": lambda: self.window.ui_mode.toggle(),
+            "toggle_smartconvert_panel": lambda: self.set_smartconvert_panel(not self.smartconvert_panel),
             "show_loupe": lambda: self.window.set_light_table(False),
             "show_develop": lambda: _show_develop(self.window),
             "toggle_zoom": lambda: _toggle_fit_zoom(self.window.canvas),
@@ -806,27 +860,21 @@ class ShortcutManager:
         return self._actions.get(action_id)
 
     def apply_bindings(self, bindings: dict[str, str]) -> None:
+        # self.bindings stays the saved set; the SmartConvert layer only changes what is live.
         self.bindings = dict(bindings)
-        set_current_bindings(self.bindings)
+        live, panel_keys = smartconvert_layer(self.bindings) if self.smartconvert_panel else (self.bindings, {})
+        set_current_bindings(live)
         for shortcut in self._shortcuts:
             shortcut.setParent(None)
         self._shortcuts.clear()
 
         for action_id, callback in self._actions.items():
-            key = self.bindings.get(action_id, "")
-            if not key:
-                continue
-            shortcut = QShortcut(QKeySequence(key), self.window)
-            held = self._held_actions.get(action_id)
-            if held is not None:
-                # Autorepeat would re-run the press while the key is down.
-                shortcut.setAutoRepeat(False)
-                shortcut.activated.connect(lambda held=held, k=QKeySequence(key)[0].key(): held(k))
-            elif action_id in SLIDER_GROUP_BY_ACTION:
-                shortcut.activated.connect(lambda run=callback, k=QKeySequence(key)[0].key(): (self.key_repeat.press(k), run()))
-            else:
-                shortcut.activated.connect(callback)
-            self._shortcuts.append(shortcut)
+            key = live.get(action_id, "")
+            if key:
+                self._add_shortcut(action_id, key, callback, held=self._held_actions.get(action_id))
+        for key, action_id in panel_keys.items():
+            self._add_shortcut(action_id, key, self._actions[action_id])
+        self.shift_tap.set_enabled(self.smartconvert_panel)
 
         self.window.controls_panel.apply_shortcut_tooltips()
         self.window.right_panel.apply_shortcut_tooltips()
@@ -839,6 +887,26 @@ class ShortcutManager:
         ui_mode = getattr(self.window, "ui_mode", None)
         if ui_mode is not None:
             ui_mode.sync_shortcuts()
+
+    def _add_shortcut(self, action_id: str, key: str, callback: Callable[[], None], held=None) -> None:
+        shortcut = QShortcut(QKeySequence(key), self.window)
+        if held is not None:
+            # Autorepeat would re-run the press while the key is down.
+            shortcut.setAutoRepeat(False)
+            shortcut.activated.connect(lambda held=held, k=QKeySequence(key)[0].key(): held(k))
+        elif action_id in SLIDER_GROUP_BY_ACTION:
+            shortcut.activated.connect(lambda run=callback, k=QKeySequence(key)[0].key(): (self.key_repeat.press(k), run()))
+        else:
+            shortcut.activated.connect(callback)
+        self._shortcuts.append(shortcut)
+
+    def set_smartconvert_panel(self, on: bool) -> None:
+        """Turn the SmartConvert Control Panel layer on or off. The saved keys stay as they are."""
+        self.smartconvert_panel = on
+        self.window.controller.session.repo.save_global_setting("smartconvert_panel", on)
+        self.apply_bindings(self.bindings)
+        message = tr("SmartConvert Control Panel keys on") if on else tr("SmartConvert Control Panel keys off")
+        self.window.controller.set_status(message, 2000)
 
     def update_bindings(self, bindings: dict[str, str]) -> None:
         save_bindings(self.window.controller.session.repo, bindings)
