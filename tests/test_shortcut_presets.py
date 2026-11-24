@@ -58,10 +58,9 @@ def test_matching_preset_names_the_set_in_use():
 
 
 def test_every_smartconvert_panel_action_is_a_registry_action():
-    from negpy.desktop.view.shortcut_presets import SMARTCONVERT_PANEL, SMARTCONVERT_SHIFT_TAP
+    from negpy.desktop.view.shortcut_presets import SMARTCONVERT_PANEL
 
-    actions = [*SMARTCONVERT_PANEL.values(), SMARTCONVERT_SHIFT_TAP]
-    assert [a for a in actions if a not in REGISTRY] == []
+    assert [a for a in SMARTCONVERT_PANEL.values() if a not in REGISTRY] == []
 
 
 def test_the_panel_layer_frees_its_keys_in_every_set(qapp):
@@ -75,30 +74,38 @@ def test_the_panel_layer_frees_its_keys_in_every_set(qapp):
         assert clashes == [], name
 
 
-def test_the_panel_takes_the_keys_it_sends():
-    from negpy.desktop.view.shortcut_presets import smartconvert_layer
-
-    live, panel = smartconvert_layer(default_bindings())
-    assert panel["Q"] == "cyan_inc" and panel["A"] == "cyan_dec"
-    assert panel["Up"] == "density_up" and panel["Alt+Up"] == "grade_up" and panel["Ctrl+Up"] == "temp_warm"
-    assert panel["Left"] == "rotate_ccw" and panel["Right"] == "rotate_cw"
-    # Back and Next send I and U.
-    assert panel["I"] == "prev_file" and panel["U"] == "next_file"
-    assert live["cycle_frame_info"] == "" and live["toggle_average_peek"] == ""
-    assert panel["C"] == "paste"
-    # NegPy's density key Q and file key Left give way to the panel; rotate keeps its own [ too.
-    assert live["density_up"] == "" and live["prev_file"] == ""
-    assert live["rotate_ccw"] == REGISTRY["rotate_ccw"].default_key
-
-
-def test_the_panels_x_key_copies_with_bounds_in_every_set():
-    from negpy.desktop.view.shortcut_presets import smartconvert_layer
-
-    for name in PRESETS:
-        assert smartconvert_layer(preset_bindings(name))[1]["X"] == "copy_with_bounds"
-
-
-def test_return_stays_the_enter_key():
+def test_the_panel_keys_are_the_keys_the_panel_sends():
+    """Read from a SmartConvert Control Panel, key by key."""
     from negpy.desktop.view.shortcut_presets import SMARTCONVERT_PANEL
 
-    assert not any(QKeySequence(k).toString() in ("Return", "Enter") for k in SMARTCONVERT_PANEL)
+    assert SMARTCONVERT_PANEL == {
+        "Q": "cyan_inc",
+        "A": "cyan_dec",
+        "W": "magenta_up",
+        "S": "magenta_down",
+        "E": "yellow_up",
+        "D": "yellow_down",
+        "T": "density_up",
+        "G": "density_down",
+        "R": "grade_up",
+        "F": "grade_down",
+        "Z": "temp_warm",
+        "H": "temp_cool",
+        "J": "rotate_ccw",
+        "L": "rotate_cw",
+        "K": "pick_dust",
+        "I": "prev_file",
+        "U": "next_file",
+        "O": "copy_with_bounds",
+        "P": "paste",
+        "V": "press_enter",
+    }
+
+
+def test_negpy_keys_the_panel_does_not_send_stay():
+    from negpy.desktop.view.shortcut_presets import smartconvert_layer
+
+    live, _panel = smartconvert_layer(default_bindings())
+    assert live["density_up"] == "" and live["toggle_keep"] == ""
+    assert live["prev_file"] == "Left" and live["next_file"] == "Right"
+    assert live["copy"] == "Ctrl+C" and live["paste"] == "Ctrl+V"

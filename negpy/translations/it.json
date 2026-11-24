@@ -2171,6 +2171,7 @@
   "Presets": "Preimpostazioni",
   "Presets are off for a frame opened from the command line.": "Le preimpostazioni sono disattivate per un fotogramma aperto dalla riga di comando.",
   "Presets are off while the output intent is Linear.": "Le preimpostazioni sono disattivate mentre l'intento di uscita è Lineare.",
+  "Press Enter in the dialog or pop-up in front": "Premi Invio nella finestra di dialogo o nel pop-up in primo piano",
   "Press Esc to close.": "Premi Esc per chiudere.",
   "Press {value} and type a word such as “grade”.": "Premi {value} e digita una parola come “gradazione”.",
   "Press {value} for the split. Press it again to close it.": "Premi {value} per la divisione. Premilo di nuovo per chiuderla.",

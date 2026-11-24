@@ -318,6 +318,7 @@ REGISTRY: dict[str, ShortcutEntry] = {
     "export_linear_output": ShortcutEntry("", tr("Export Linear Output"), tr("Actions")),
     "export_selected": ShortcutEntry("", tr("Export the selected frames"), tr("Actions")),
     "export_roll": ShortcutEntry("", tr("Export every visible frame of the roll"), tr("Actions")),
+    "press_enter": ShortcutEntry("", tr("Press Enter in the dialog or pop-up in front"), tr("Actions")),
     "export_preferences": ShortcutEntry("Ctrl+Shift+E", tr("Open Export Preferences"), tr("Actions")),
     "merge_frame": ShortcutEntry("", tr("Merge Frame to TIFF Negative…"), tr("Actions")),
     "merge_selected": ShortcutEntry("", tr("Merge Selected to TIFF Negative…"), tr("Actions")),

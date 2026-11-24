@@ -28,7 +28,7 @@ from negpy.desktop.view.shortcut_registry import (
     set_current_bindings,
     slider_step_for,
 )
-from negpy.desktop.view.shortcut_presets import SMARTCONVERT_SHIFT_TAP, smartconvert_layer
+from negpy.desktop.view.shortcut_presets import smartconvert_layer
 from negpy.desktop.view.slider_shortcut_groups import SLIDER_GROUP_BY_ACTION, SLIDER_GROUPS, SliderShortcutGroup, sign_for_action
 from negpy.desktop.view.frame_merge_action import SCOPE_FRAME, SCOPE_ROLL, SCOPE_SELECTION, merge_to_tiff
 from negpy.desktop.view.sidecar_action import load_edit_from_sidecar
@@ -220,6 +220,15 @@ def _toggle_tool_button(window, tab_key: str | None, button) -> None:
         # An icon-only tool names itself in its tooltip ("Film Base: ...").
         name = button.text().strip() or getattr(button, "plain_tooltip", "").split(":")[0]
         window.controller.set_status(tr("{value} not available", value=name), 1500, kind="warning")
+
+
+def _press_enter() -> None:
+    """Send Enter to the widget with focus, so the dialog or pop-up in front takes it."""
+    target = QApplication.focusWidget() or QApplication.activeWindow()
+    if target is None:
+        return
+    for kind in (QEvent.Type.KeyPress, QEvent.Type.KeyRelease):
+        QApplication.sendEvent(target, QKeyEvent(kind, Qt.Key.Key_Return, Qt.KeyboardModifier.NoModifier))
 
 
 def _toggle_local_tool(window, button) -> None:
@@ -482,56 +491,6 @@ class KeyRepeat(QObject):
         return False
 
 
-class ShiftTap(QObject):
-    """Runs a callback when Shift is pressed and released alone in the main window. A key or a
-    click while Shift is down (Shift+click, a capital letter) cancels it."""
-
-    TAP_SECONDS = 0.5
-
-    def __init__(self, window, callback: Callable[[], None]):
-        super().__init__(window)
-        self.window = window
-        self._callback = callback
-        self._down_at: Optional[float] = None
-        self._installed = False
-
-    def set_enabled(self, enabled: bool) -> None:
-        app = QApplication.instance()
-        if enabled and not self._installed:
-            app.installEventFilter(self)
-        elif not enabled and self._installed:
-            app.removeEventFilter(self)
-        self._installed = enabled
-        self._down_at = None
-
-    def _in_text_field(self) -> bool:
-        from PyQt6.QtWidgets import QAbstractSpinBox, QLineEdit, QPlainTextEdit, QTextEdit
-
-        return isinstance(QApplication.focusWidget(), (QLineEdit, QTextEdit, QPlainTextEdit, QAbstractSpinBox))
-
-    def eventFilter(self, watched, event) -> bool:
-        import time
-
-        kind = event.type()
-        if kind == QEvent.Type.KeyPress:
-            shift_alone = event.key() == Qt.Key.Key_Shift and event.modifiers() == Qt.KeyboardModifier.ShiftModifier
-            if event.isAutoRepeat():
-                return False
-            self._down_at = time.monotonic() if shift_alone else None
-        elif kind in (QEvent.Type.MouseButtonPress, QEvent.Type.Wheel):
-            self._down_at = None
-        elif kind == QEvent.Type.KeyRelease and event.key() == Qt.Key.Key_Shift and not event.isAutoRepeat():
-            down_at, self._down_at = self._down_at, None
-            if (
-                down_at is not None
-                and time.monotonic() - down_at < self.TAP_SECONDS
-                and QApplication.activeWindow() is self.window
-                and not self._in_text_field()
-            ):
-                QTimer.singleShot(0, self._callback)
-        return False
-
-
 class ShortcutManager:
     def __init__(self, window):
         self.window = window
@@ -543,7 +502,6 @@ class ShortcutManager:
         self._actions = self._build_actions()
         self.key_hold = KeyHold(window)
         self._held_actions = self._build_held_actions()
-        self.shift_tap = ShiftTap(window, lambda: self._actions[SMARTCONVERT_SHIFT_TAP]())
         self.apply_bindings(self.bindings)
 
     def _build_held_actions(self) -> dict[str, Callable[[int], None]]:
@@ -758,6 +716,7 @@ class ShortcutManager:
             "show_loupe": lambda: self.window.set_light_table(False),
             "show_develop": lambda: _show_develop(self.window),
             "toggle_zoom": lambda: _toggle_fit_zoom(self.window.canvas),
+            "press_enter": _press_enter,
             "export_selected": lambda: right.export_sidebar.run_export("selected"),
             "export_roll": lambda: right.export_sidebar.run_export("all"),
             "export_preferences": lambda: self.window.ui_mode.open_export_preferences(),
@@ -876,7 +835,6 @@ class ShortcutManager:
                 self._add_shortcut(action_id, key, callback, held=self._held_actions.get(action_id))
         for key, action_id in panel_keys.items():
             self._add_shortcut(action_id, key, self._actions[action_id])
-        self.shift_tap.set_enabled(self.smartconvert_panel)
 
         self.window.controls_panel.apply_shortcut_tooltips()
         self.window.right_panel.apply_shortcut_tooltips()
@@ -892,6 +850,9 @@ class ShortcutManager:
 
     def _add_shortcut(self, action_id: str, key: str, callback: Callable[[], None], held=None) -> None:
         shortcut = QShortcut(QKeySequence(key), self.window)
+        if action_id == "press_enter":
+            # Its job is a dialog or pop-up in front, which is a window of its own.
+            shortcut.setContext(Qt.ShortcutContext.ApplicationShortcut)
         if held is not None:
             # Autorepeat would re-run the press while the key is down.
             shortcut.setAutoRepeat(False)

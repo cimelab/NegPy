@@ -2171,6 +2171,7 @@
   "Presets": "プリセット",
   "Presets are off for a frame opened from the command line.": "コマンドラインから開いたフレームでは、プリセットは使えません。",
   "Presets are off while the output intent is Linear.": "出力意図がリニアの間、プリセットは使えません。",
+  "Press Enter in the dialog or pop-up in front": "前面のダイアログまたはポップアップで Enter を押す",
   "Press Esc to close.": "Esc キーで閉じます。",
   "Press {value} and type a word such as “grade”.": "{value} を押して、「grade」などの単語を入力します。",
   "Press {value} for the split. Press it again to close it.": "分割するには {value} を押します。もう一度押すと閉じます。",

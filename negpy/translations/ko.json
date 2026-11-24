@@ -2171,6 +2171,7 @@
   "Presets": "사전 설정",
   "Presets are off for a frame opened from the command line.": "명령줄에서 연 프레임에서는 사전 설정을 사용할 수 없습니다.",
   "Presets are off while the output intent is Linear.": "출력 의도가 선형인 동안에는 사전 설정을 사용할 수 없습니다.",
+  "Press Enter in the dialog or pop-up in front": "앞에 있는 대화상자나 팝업에서 Enter 누르기",
   "Press Esc to close.": "Esc 키를 눌러 닫습니다.",
   "Press {value} and type a word such as “grade”.": "{value}를 누르고 '등급'과 같은 단어를 입력하세요.",
   "Press {value} for the split. Press it again to close it.": "분할하려면 {value}를 누르세요. 다시 누르면 닫힙니다.",

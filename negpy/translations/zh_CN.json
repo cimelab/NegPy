@@ -2171,6 +2171,7 @@
   "Presets": "预设",
   "Presets are off for a frame opened from the command line.": "从命令行打开的画面不可使用预设。",
   "Presets are off while the output intent is Linear.": "输出意图为线性时预设不可用。",
+  "Press Enter in the dialog or pop-up in front": "在前方的对话框或弹出窗口中按 Enter",
   "Press Esc to close.": "按 Esc 关闭。",
   "Press {value} and type a word such as “grade”.": "按 {value}，输入如“grade”的词。",
   "Press {value} for the split. Press it again to close it.": "按 {value} 显示分屏，再按一次关闭。",

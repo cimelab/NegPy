@@ -95,34 +95,32 @@ def matching_preset(bindings: dict[str, str]) -> str:
 
 # The SmartConvert Control Panel (Filmomat) sends fixed keyboard keys. Its set is NegPy's own with
 # this layer on top: each panel key runs a NegPy action, and a NegPy action on the same key goes
-# unbound. A layer, because a panel key can run an action that keeps its own key (C and Ctrl+V
-# both paste). Ctrl is ⌘ and Alt is ⌥ on macOS.
+# unbound. A layer, because a panel key can run an action that keeps its own key (P and Ctrl+V
+# both paste).
 SMARTCONVERT = "smartconvert"
+# The keys the panel sends, read from the panel itself, in its own order.
 SMARTCONVERT_PANEL: dict[str, str] = {
-    "Q": "cyan_inc",
-    "A": "cyan_dec",
-    "W": "magenta_up",
-    "S": "magenta_down",
-    "E": "yellow_up",
-    "D": "yellow_down",
-    "Up": "density_up",
-    "Down": "density_down",
-    "Alt+Up": "grade_up",
-    "Alt+Down": "grade_down",
-    # The panel's Saturation keys.
-    "Ctrl+Up": "temp_warm",
-    "Ctrl+Down": "temp_cool",
-    "Left": "rotate_ccw",
-    "Right": "rotate_cw",
-    # Back and Next.
-    "I": "prev_file",
-    "U": "next_file",
-    # The three custom keys: X and C, and Return, which stays the Enter key.
-    "X": "copy_with_bounds",
-    "C": "paste",
+    "Q": "cyan_inc",  # Cyan
+    "A": "cyan_dec",  # Red
+    "W": "magenta_up",  # Magenta
+    "S": "magenta_down",  # Green
+    "E": "yellow_up",  # Yellow
+    "D": "yellow_down",  # Blue
+    "T": "density_up",
+    "G": "density_down",
+    "R": "grade_up",  # Contrast
+    "F": "grade_down",
+    "Z": "temp_warm",  # Saturation
+    "H": "temp_cool",
+    "J": "rotate_ccw",
+    "L": "rotate_cw",
+    "K": "pick_dust",  # Mirror
+    "I": "prev_file",  # Back
+    "U": "next_file",  # Next
+    "O": "copy_with_bounds",  # Custom 1
+    "P": "paste",  # Custom 2
+    "V": "press_enter",  # Custom 3
 }
-# The panel's Mirror key sends Shift alone, which no key sequence can hold.
-SMARTCONVERT_SHIFT_TAP = "pick_dust"
 
 
 def smartconvert_layer(bindings: dict[str, str]) -> tuple[dict[str, str], dict[str, str]]:
