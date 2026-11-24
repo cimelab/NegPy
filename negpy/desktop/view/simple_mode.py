@@ -265,36 +265,38 @@ class UiMode(QObject):
         advanced_act.setChecked(not self.simple)
         self._mode_actions.append((simple_act, advanced_act))
 
-    def build_shortcut_set_menu(self, parent: QWidget) -> QMenu:
-        """Switch every key to NegPy's own set or the Lightroom one. Checked is the set in use;
-        neither is checked once the user has customized keys of their own."""
-        from negpy.desktop.view.shortcut_presets import PRESETS, matching_preset
+    def _set_labels(self) -> dict[str, str]:
+        from negpy.desktop.view.shortcut_presets import PRESETS, SMARTCONVERT
 
+        labels = {name: label for name, (label, _overrides) in PRESETS.items()}
+        labels[SMARTCONVERT] = tr("SmartConvert Control Panel")
+        return labels
+
+    def current_shortcut_set(self) -> str:
+        """The set in use, or "" for keys the user customized."""
+        from negpy.desktop.view.shortcut_presets import SMARTCONVERT, matching_preset
+
+        manager = self._window.shortcut_manager
+        return SMARTCONVERT if manager.smartconvert_panel else matching_preset(manager.bindings)
+
+    def build_shortcut_set_menu(self, parent: QWidget) -> QMenu:
+        """One shortcut set at a time: NegPy, Lightroom or the SmartConvert Control Panel. None is
+        checked once the user has customized keys of their own."""
         menu = QMenu(tr("Keyboard Shortcuts"), parent)
         group = QActionGroup(menu)
         group.setExclusive(False)
         actions = {}
         manager = self._window.shortcut_manager
-        for name, (label, _overrides) in PRESETS.items():
-            act = self._action(menu, tr("{value} Shortcuts", value=label), lambda n=name: self._use_shortcut_set(n))
+        for name, label in self._set_labels().items():
+            act = self._action(menu, tr("{value} Shortcuts", value=label), lambda n=name: self.use_shortcut_set(n))
             act.setCheckable(True)
             group.addAction(act)
             actions[name] = act
 
-        menu.addSeparator()
-        # A layer over either set: the panel's keys take over only the keys the panel sends.
-        panel_act = self._action(
-            menu,
-            tr("SmartConvert Control Panel"),
-            lambda: manager.set_smartconvert_panel(not manager.smartconvert_panel),
-        )
-        panel_act.setCheckable(True)
-
         def sync() -> None:
-            current = matching_preset(manager.bindings)
+            current = self.current_shortcut_set()
             for name, act in actions.items():
                 act.setChecked(name == current)
-            panel_act.setChecked(manager.smartconvert_panel)
 
         menu.aboutToShow.connect(sync)
         menu.addSeparator()
@@ -351,27 +353,28 @@ class UiMode(QObject):
         menu.aboutToShow.connect(sync)
         return menu
 
-    def _use_shortcut_set(self, name: str) -> None:
+    def use_shortcut_set(self, name: str) -> None:
         """Switch every key to the set *name*, after asking when that would drop keys the user
-        set by hand."""
+        set by hand. The SmartConvert set is NegPy's keys with the panel's keys over them."""
         from PyQt6.QtWidgets import QMessageBox
 
-        from negpy.desktop.view.shortcut_presets import PRESETS, matching_preset, preset_bindings
+        from negpy.desktop.view.shortcut_presets import SMARTCONVERT, matching_preset, preset_bindings
 
         manager = self._window.shortcut_manager
-        current = matching_preset(manager.bindings)
-        if current == name:
+        label = self._set_labels()[name]
+        if self.current_shortcut_set() == name:
             return
-        if not current:
+        if not matching_preset(manager.bindings):
             answer = QMessageBox.question(
                 self._window,
                 tr("Keyboard Shortcuts"),
-                tr("Replace your customized shortcuts with the {value} set?", value=PRESETS[name][0]),
+                tr("Replace your customized shortcuts with the {value} set?", value=label),
             )
             if answer != QMessageBox.StandardButton.Yes:
                 return
-        manager.update_bindings(preset_bindings(name))
-        self._window.controller.set_status(tr("{value} Shortcuts", value=PRESETS[name][0]), 2000)
+        panel = name == SMARTCONVERT
+        manager.use_set(preset_bindings("negpy" if panel else name), smartconvert_panel=panel)
+        self._window.controller.set_status(tr("{value} Shortcuts", value=label), 2000)
 
     def sync_shortcuts(self) -> None:
         """Show each item's key, after a rebind too. On macOS a menu key equivalent outranks

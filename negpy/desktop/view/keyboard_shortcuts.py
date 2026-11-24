@@ -752,7 +752,9 @@ class ShortcutManager:
             "edit_toolbar": toolbar.open_toolbar_editor,
             # The mode and its pop-ups are built after this manager, so these look them up when run.
             "toggle_simple_mode": lambda: self.window.ui_mode.toggle(),
-            "toggle_smartconvert_panel": lambda: self.set_smartconvert_panel(not self.smartconvert_panel),
+            "toggle_smartconvert_panel": lambda: self.window.ui_mode.use_shortcut_set(
+                "negpy" if self.smartconvert_panel else "smartconvert"
+            ),
             "show_loupe": lambda: self.window.set_light_table(False),
             "show_develop": lambda: _show_develop(self.window),
             "toggle_zoom": lambda: _toggle_fit_zoom(self.window.canvas),
@@ -900,13 +902,11 @@ class ShortcutManager:
             shortcut.activated.connect(callback)
         self._shortcuts.append(shortcut)
 
-    def set_smartconvert_panel(self, on: bool) -> None:
-        """Turn the SmartConvert Control Panel layer on or off. The saved keys stay as they are."""
-        self.smartconvert_panel = on
-        self.window.controller.session.repo.save_global_setting("smartconvert_panel", on)
-        self.apply_bindings(self.bindings)
-        message = tr("SmartConvert Control Panel keys on") if on else tr("SmartConvert Control Panel keys off")
-        self.window.controller.set_status(message, 2000)
+    def use_set(self, bindings: dict[str, str], smartconvert_panel: bool) -> None:
+        """Save *bindings*, with the SmartConvert Control Panel layer on or off over them."""
+        self.smartconvert_panel = smartconvert_panel
+        self.window.controller.session.repo.save_global_setting("smartconvert_panel", smartconvert_panel)
+        self.update_bindings(bindings)
 
     def update_bindings(self, bindings: dict[str, str]) -> None:
         save_bindings(self.window.controller.session.repo, bindings)

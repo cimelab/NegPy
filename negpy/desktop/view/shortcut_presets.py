@@ -93,9 +93,11 @@ def matching_preset(bindings: dict[str, str]) -> str:
     return ""
 
 
-# The SmartConvert Control Panel (Filmomat) sends fixed keyboard keys. Its layer sits on top of
-# whichever set is in use: each panel key runs a NegPy action, and any action of that set on the
-# same key goes unbound while the layer is on. Ctrl is ⌘ and Alt is ⌥ on macOS.
+# The SmartConvert Control Panel (Filmomat) sends fixed keyboard keys. Its set is NegPy's own with
+# this layer on top: each panel key runs a NegPy action, and a NegPy action on the same key goes
+# unbound. A layer, because a panel key can run an action that keeps its own key (C and Ctrl+V
+# both paste). Ctrl is ⌘ and Alt is ⌥ on macOS.
+SMARTCONVERT = "smartconvert"
 SMARTCONVERT_PANEL: dict[str, str] = {
     "Q": "cyan_inc",
     "A": "cyan_dec",
@@ -112,8 +114,9 @@ SMARTCONVERT_PANEL: dict[str, str] = {
     "Ctrl+Down": "temp_cool",
     "Left": "rotate_ccw",
     "Right": "rotate_cw",
-    "Ctrl+Left": "prev_file",
-    "Ctrl+Right": "next_file",
+    # Back and Next.
+    "I": "prev_file",
+    "U": "next_file",
     # The three custom keys: X and C, and Return, which stays the Enter key.
     "X": "copy_with_bounds",
     "C": "paste",

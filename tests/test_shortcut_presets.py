@@ -81,7 +81,10 @@ def test_the_panel_takes_the_keys_it_sends():
     live, panel = smartconvert_layer(default_bindings())
     assert panel["Q"] == "cyan_inc" and panel["A"] == "cyan_dec"
     assert panel["Up"] == "density_up" and panel["Alt+Up"] == "grade_up" and panel["Ctrl+Up"] == "temp_warm"
-    assert panel["Left"] == "rotate_ccw" and panel["Ctrl+Right"] == "next_file"
+    assert panel["Left"] == "rotate_ccw" and panel["Right"] == "rotate_cw"
+    # Back and Next send I and U.
+    assert panel["I"] == "prev_file" and panel["U"] == "next_file"
+    assert live["cycle_frame_info"] == "" and live["toggle_average_peek"] == ""
     assert panel["C"] == "paste"
     # NegPy's density key Q and file key Left give way to the panel; rotate keeps its own [ too.
     assert live["density_up"] == "" and live["prev_file"] == ""
