@@ -314,6 +314,8 @@ class UiMode(QObject):
         self._action(menu, tr("Import Folder as a Roll…"), run("import_roll"), "import_roll")
         self._action(menu, tr("Run Roll Analysis"), run("roll_batch_analysis"), "roll_batch_analysis")
         self._action(menu, tr("Roll Settings…"), run("roll_settings"), "roll_settings")
+        menu.addSeparator()
+        self._action(menu, tr("Reset Roll…"), run("reset_open_roll"), "reset_open_roll")
 
         def sync() -> None:
             # A card the film mode retires (Fade Restoration off a slide, Raw Decode off a scan)
